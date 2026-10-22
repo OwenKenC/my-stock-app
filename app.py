@@ -14,7 +14,7 @@ from urllib.parse import quote
 # --- 網頁與手機版面設定 ---
 st.set_page_config(page_title="台美股戰略追蹤 App", page_icon="📱", layout="wide")
 
-# --- 修正第 1 點：全域隱藏 "Press Enter to submit form" 小字 ---
+# --- 全域 CSS：隱藏輸入框提示字、防止下拉選單觸發手機鍵盤 ---
 st.markdown(
     """
     <style>
@@ -23,46 +23,23 @@ st.markdown(
         visibility: hidden !important;
     }
     div[data-baseweb="select"] input {
+        pointer-events: none !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
         caret-color: transparent !important;
+        width: 0px !important;
+        opacity: 0 !important;
+    }
+    iframe[title="streamlit_components_v1.html_v1"] {
+        height: 1px !important;
+        min-height: 1px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
     }
     </style>
     """,
     unsafe_allow_html=True
-)
-
-# --- 修正第 2 點：在網頁最頂端立即載入「防彈出手機鍵盤鎖」，每 0.2 秒自動鎖定所有下拉選單 ---
-components.html(
-    """
-    <script>
-    function lockAllSelectInputs() {
-        try {
-            const parentDoc = window.parent.document;
-            const selectInputs = parentDoc.querySelectorAll('div[data-baseweb="select"] input');
-            selectInputs.forEach(input => {
-                if (input.getAttribute('inputmode') !== 'none') {
-                    input.setAttribute('inputmode', 'none');
-                }
-                if (!input.hasAttribute('readonly')) {
-                    input.setAttribute('readonly', 'readonly');
-                }
-            });
-        } catch (e) {}
-    }
-    lockAllSelectInputs();
-    setInterval(lockAllSelectInputs, 200);
-    try {
-        window.parent.document.addEventListener('touchstart', lockAllSelectInputs, {passive: true, capture: true});
-        window.parent.document.addEventListener('mousedown', lockAllSelectInputs, {passive: true, capture: true});
-        window.parent.document.addEventListener('focusin', function(e) {
-            if (e.target && e.target.closest && e.target.closest('div[data-baseweb="select"]')) {
-                e.target.setAttribute('inputmode', 'none');
-                e.target.setAttribute('readonly', 'readonly');
-            }
-        }, true);
-    } catch (e) {}
-    </script>
-    """,
-    height=0,
 )
 
 # --- 預設股票清單 (標準模板格式) ---
@@ -73,21 +50,24 @@ DEFAULT_STOCKS = {
     "CRDO": "CRDO (Credo 高速傳輸 AEC)",
     "GLW": "GLW (康寧 光纖/玻璃基板)",
     "GOOG": "GOOG (Alphabet 科技巨頭)",
-    "ON": "ON (安森美 車用/功率半導體)",
     "NOK": "NOK (諾基亞 AI-RAN/光網路)",
     "NVTS": "NVTS (納微 800V GaN/SiC)",
+    "ON": "ON (安森美 車用/功率半導體)",
+    "2313.TW": "2313 華通 (低軌衛星/高階HDI板)",
     "2330.TW": "2330 台積電 (先進製程/CoWoS龍頭)",
+    "3037.TW": "3037 欣興 (ABF載板/AI伺服器)",
     "3491.TWO": "3491 昇達科 (低軌衛星元件)",
-    "8027.TWO": "8027 鈦昇 (TGV 玻璃基板設備)",
-    "6271.TW": "6271 同欣電 (CIS/高頻模組封測)",
+    "3714.TW": "3714 富采 (Micro LED/CPO光源)",
     "4540.TW": "4540 全球傳動 (機器人滾珠螺桿)",
     "4576.TW": "4576 大銀微系統 (精密運動控制)",
-    "3714.TW": "3714 富采 (Micro LED/CPO光源)",
-    "6127.TWO": "6127 九豪 (氧化鋁陶瓷基板)"
+    "6127.TWO": "6127 九豪 (氧化鋁陶瓷基板)",
+    "6271.TW": "6271 同欣電 (CIS/高頻模組封測)",
+    "8027.TWO": "8027 鈦昇 (TGV 玻璃基板設備)"
 }
 
-# --- 修正第 3 點：內建台美股智慧模板庫 (輸入代號自動轉為「代號 名稱 (產業定位)」格式) ---
+# --- 內建台美股智慧模板庫 (支援輸入「代號」或「中文公司名稱」雙向查找) ---
 KNOWN_STOCK_PROFILES = {
+    "2313": ("2313.TW", "2313 華通 (低軌衛星/高階HDI板)"),
     "2330": ("2330.TW", "2330 台積電 (先進製程/CoWoS龍頭)"),
     "2454": ("2454.TW", "2454 聯發科 (IC設計/邊緣AI晶片)"),
     "2317": ("2317.TW", "2317 鴻海 (AI伺服器機櫃龍頭)"),
@@ -114,7 +94,11 @@ KNOWN_STOCK_PROFILES = {
     "3443": ("3443.TW", "3443 創意 (台積電先進製程ASIC)"),
     "2382": ("2382.TW", "2382 廣達 (AI伺服器代工龍頭)"),
     "3231": ("3231.TW", "3231 緯創 (AI GPU基板/伺服器)"),
+    "6669": ("6669.TW", "6669 緯穎 (雲端CSP伺服器龍頭)"),
     "2303": ("2303.TW", "2303 聯電 (成熟製程晶圓代工)"),
+    "6285": ("6285.TW", "6285 啟碁 (低軌衛星車用網通)"),
+    "2355": ("2355.TW", "2355 敬鵬 (車用/低軌衛星PCB)"),
+    "2367": ("2367.TW", "2367 耀登 (低軌衛星天線模組)"),
     "3491": ("3491.TWO", "3491 昇達科 (低軌衛星元件)"),
     "8027": ("8027.TWO", "8027 鈦昇 (TGV 玻璃基板設備)"),
     "6271": ("6271.TW", "6271 同欣電 (CIS/高頻模組封測)"),
@@ -137,63 +121,105 @@ KNOWN_STOCK_PROFILES = {
     "AMZN": ("AMZN", "AMZN (亞馬遜 AWS雲端/Kuiper衛星)"),
     "META": ("META", "META (Meta 社群與開源AI巨頭)"),
     "FORM": ("FORM", "FORM (FormFactor 晶圓探針卡龍頭)"),
+    "AEHR": ("AEHR", "AEHR (Aehr 晶圓級老化測試設備)"),
     "QS": ("QS", "QS (QuantumScape 固態電池研發)"),
     "SATS": ("SATS", "SATS (EchoStar 衛星通訊/SpaceX概念)")
 }
 
+@st.cache_data(ttl=86400)
+def load_tw_stock_directory():
+    """載入全台股上市櫃 1800+ 檔股票名冊，支援直接輸入『中文公司名稱』反查代號與產業"""
+    try:
+        url = "https://api.finmindtrade.com/api/v4/data"
+        resp = requests.get(url, params={"dataset": "TaiwanStockInfo"}, timeout=8)
+        data = resp.json().get("data", [])
+        if data:
+            df = pd.DataFrame(data)
+            df = df[df["stock_id"].str.match(r"^\d{4}$", na=False)]
+            df = df.drop_duplicates(subset=["stock_id"], keep="first")
+            return df
+    except Exception:
+        pass
+    return pd.DataFrame()
+
 def auto_format_stock_entry(raw_input_str):
-    """將使用者輸入的任何代號自動轉為『3491 昇達科 (低軌衛星元件)』標準模板格式"""
+    """修正第 2 點：不論輸入『代號(2313)』或『中文股名(華通)』，皆自動轉為標準模板格式"""
     text = raw_input_str.strip()
+    if not text:
+        return "", ""
+
+    # 1. 先檢查是否直接命中內建智慧庫的「中文名稱」或「代號」
+    clean_query = text.replace(".TW", "").replace(".TWO", "").strip()
+    if clean_query.upper() in KNOWN_STOCK_PROFILES:
+        return KNOWN_STOCK_PROFILES[clean_query.upper()]
+
+    for code_key, (full_tk, label_str) in KNOWN_STOCK_PROFILES.items():
+        # 例如使用者只輸入 "華通" 或 "台積電" 或 "昇達科"
+        if clean_query in label_str:
+            parts = label_str.split(" ")
+            if len(parts) >= 2 and (clean_query == parts[1] or clean_query in parts[1]):
+                return full_tk, label_str
+
+    # 2. 拆解輸入字串
     match = re.match(r"^([A-Za-z0-9\.]+)\s*(.*)$", text)
-    code_raw = match.group(1).upper() if match else text.upper()
-    user_note = match.group(2).strip() if match else ""
+    if match:
+        code_raw = match.group(1).upper()
+        user_note = match.group(2).strip()
+    else:
+        code_raw = ""
+        user_note = text
 
+    tw_dir = load_tw_stock_directory()
+
+    # 3. 情境 A：使用者直接輸入「中文公司名稱」（例如：「華通」、「奇鋐」、「長榮」）
+    if not code_raw or any("\u4e00" <= ch <= "\u9fff" for ch in text):
+        # 嘗試從字串中提取 4 碼數字（若有）與中文名稱
+        num_match = re.search(r"(\d{4})", text)
+        chinese_only = re.sub(r"[A-Za-z0-9\.\(\)（）\s]+", "", text)
+
+        if num_match:
+            base_code = num_match.group(1)
+            if base_code in KNOWN_STOCK_PROFILES:
+                return KNOWN_STOCK_PROFILES[base_code]
+            if not tw_dir.empty:
+                row = tw_dir[tw_dir["stock_id"] == base_code]
+                if not row.empty:
+                    r = row.iloc[0]
+                    sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
+                    return f"{base_code}{sfx}", f"{base_code} {r['stock_name']} ({r.get('industry_category', '台股標的')})"
+
+        if chinese_only and not tw_dir.empty:
+            # 精確比對或模糊比對台股中文名稱
+            exact_row = tw_dir[tw_dir["stock_name"] == chinese_only]
+            if exact_row.empty:
+                exact_row = tw_dir[tw_dir["stock_name"].str.contains(re.escape(chinese_only), na=False)]
+            if not exact_row.empty:
+                r = exact_row.iloc[0]
+                sid = r["stock_id"]
+                if sid in KNOWN_STOCK_PROFILES:
+                    return KNOWN_STOCK_PROFILES[sid]
+                sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
+                ind = r.get("industry_category", "台股核心標的")
+                return f"{sid}{sfx}", f"{sid} {r['stock_name']} ({ind})"
+
+    # 4. 情境 B：使用者輸入台股 4 碼數字代號（例如：「2313」）
     base_code = code_raw.replace(".TW", "").replace(".TWO", "")
-
-    # 1. 若使用者有自己打名稱與括號備註，或落在內建智慧庫中
-    if base_code in KNOWN_STOCK_PROFILES:
-        full_ticker, preset_label = KNOWN_STOCK_PROFILES[base_code]
-        if user_note and "(" in user_note:
-            return full_ticker, f"{base_code} {user_note}" if base_code.isdigit() else f"{base_code} {user_note}"
-        return full_ticker, preset_label
-
-    # 2. 若為台股 4 碼代號：自動向 FinMind 台股官方名冊查詢「中文股名」與「產業分類」
     if base_code.isdigit():
-        stock_name = ""
-        industry = "台股個股"
-        market_suffix = ".TW"
-        try:
-            url = "https://api.finmindtrade.com/api/v4/data"
-            resp = requests.get(url, params={"dataset": "TaiwanStockInfo", "data_id": base_code}, timeout=5)
-            data = resp.json().get("data", [])
-            if data:
-                stock_name = data[0].get("stock_name", "")
-                industry = data[0].get("industry_category", "台股核心標的")
-                m_type = data[0].get("type", "twse")
-                market_suffix = ".TWO" if m_type == "tpex" else ".TW"
-        except Exception:
-            pass
+        if base_code in KNOWN_STOCK_PROFILES:
+            return KNOWN_STOCK_PROFILES[base_code]
+        if not tw_dir.empty:
+            row = tw_dir[tw_dir["stock_id"] == base_code]
+            if not row.empty:
+                r = row.iloc[0]
+                sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
+                ind = r.get("industry_category", "台股核心標的")
+                return f"{base_code}{sfx}", f"{base_code} {r['stock_name']} ({ind})"
+        return f"{base_code}.TW", f"{base_code} {user_note or '台股標的'} (台股自選)"
 
-        full_ticker = code_raw if (code_raw.endswith(".TW") or code_raw.endswith(".TWO")) else f"{base_code}{market_suffix}"
-        if user_note:
-            # 若使用者輸入 "2330 台積電" 則自動補上產業括號
-            if stock_name and stock_name == user_note:
-                return full_ticker, f"{base_code} {stock_name} ({industry})"
-            elif "(" in user_note or "（" in user_note:
-                return full_ticker, f"{base_code} {user_note}"
-            else:
-                return full_ticker, f"{base_code} {user_note} ({industry})"
-        else:
-            if stock_name:
-                return full_ticker, f"{base_code} {stock_name} ({industry})"
-            return full_ticker, f"{base_code} ({industry})"
-
-    # 3. 若為美股代號：自動查詢公司名稱與產業板塊
-    full_ticker = code_raw
-    if user_note:
-        if "(" in user_note or "（" in user_note:
-            return full_ticker, f"{full_ticker} {user_note}"
-        return full_ticker, f"{full_ticker} ({user_note})"
+    # 5. 情境 C：美股英文代號（例如：「AMD」、「NVDA」）
+    full_ticker = code_raw if code_raw else text.upper()
+    if full_ticker in KNOWN_STOCK_PROFILES:
+        return KNOWN_STOCK_PROFILES[full_ticker]
     try:
         info = yf.Ticker(full_ticker).info or {}
         short_name = info.get("shortName", "").split(",")[0].split(" Inc")[0].strip()
@@ -203,6 +229,27 @@ def auto_format_stock_entry(raw_input_str):
     except Exception:
         pass
     return full_ticker, f"{full_ticker} (美股自選標的)"
+
+def get_sorted_watchlist_keys(wl_dict):
+    """修正第 3 點：先依英文字母排序 (A->Z)，再依台股數字代號排序 (小->大)"""
+    def sort_key(tk):
+        base = tk.split(".")[0].strip()
+        if base.isdigit():
+            return (1, int(base), base)
+        elif base and base[0].isalpha():
+            return (0, 0, base.upper())
+        else:
+            return (2, 0, base)
+    return sorted(wl_dict.keys(), key=sort_key)
+
+def sort_portfolio_df(df):
+    """修正第 5 點：個人持倉表格依照代號從 A 到 Z 排序"""
+    if df.empty or "代號" not in df.columns:
+        return df
+    df_copy = df.copy()
+    df_copy["_sort_key"] = df_copy["代號"].astype(str).str.strip().str.upper()
+    df_copy = df_copy.sort_values(by="_sort_key", ascending=True).drop(columns=["_sort_key"]).reset_index(drop=True)
+    return df_copy
 
 SEARCH_KEYWORDS = {
     "ASTS": "AST SpaceMobile OR ASTS",
@@ -214,7 +261,9 @@ SEARCH_KEYWORDS = {
     "ON": "ON Semiconductor 安森美",
     "NOK": "Nokia 諾基亞",
     "NVTS": "Navitas NVTS 納微",
+    "2313.TW": "華通",
     "2330.TW": "台積電",
+    "3037.TW": "欣興",
     "3491.TWO": "昇達科",
     "8027.TWO": "鈦昇",
     "6271.TW": "同欣電",
@@ -225,7 +274,10 @@ SEARCH_KEYWORDS = {
 }
 
 FALLBACK_FINANCIALS = {
+    "2313.TW": {"rev_growth": 18.5, "gm": 19.8, "om": 11.2, "nm": 8.9, "roe": 14.5, "cr": 1.85, "qr": 1.35, "de": 42.0, "target": "低軌衛星主力", "f_pe": 16.5},
     "2330.TW": {"rev_growth": 36.5, "gm": 57.8, "om": 47.5, "nm": 42.1, "roe": 31.8, "cr": 2.45, "qr": 2.15, "de": 21.0, "target": 1500.0, "f_pe": 22.5},
+    "3037.TW": {"rev_growth": 24.45, "gm": 17.96, "om": 8.5, "nm": 6.8, "roe": 9.2, "cr": 1.75, "qr": 1.40, "de": 45.0, "target": 965.0, "f_pe": 28.0},
+    "AMD":  {"rev_growth": 28.0, "gm": 53.5, "om": 21.0, "nm": 16.5, "roe": 12.4, "cr": 2.50, "qr": 1.90, "de": 4.5, "target": 220.0, "f_pe": 29.5},
     "CRDO": {"rev_growth": 68.5, "gm": 68.8, "om": 22.4, "nm": 20.1, "roe": 16.5, "cr": 5.8, "qr": 5.1, "de": 3.2, "target": 215.0, "f_pe": 45.2},
     "NVTS": {"rev_growth": -18.5, "gm": 38.12, "om": -269.3, "nm": -856.9, "roe": -52.6, "cr": 21.79, "qr": 20.34, "de": 0.64, "target": 15.0, "f_pe": "尚未獲利(轉機期)"},
     "NOK":  {"rev_growth": 12.4, "gm": 44.23, "om": 3.27, "nm": 2.8, "roe": 3.46, "cr": 1.51, "qr": 1.22, "de": 15.85, "target": 12.5, "f_pe": 14.8},
@@ -247,7 +299,7 @@ FALLBACK_FINANCIALS = {
 PORTFOLIO_FILE = "portfolio_saved.csv"
 WATCHLIST_FILE = "watchlist_saved.json"
 
-# 載入自選股並自動將舊格式升級為「3491 昇達科 (低軌衛星元件)」標準模板格式
+# 載入自選股並自動修正任何純中文或舊格式項目
 if "watchlist" not in st.session_state:
     if os.path.exists(WATCHLIST_FILE):
         try:
@@ -257,9 +309,10 @@ if "watchlist" not in st.session_state:
             for k, v in saved_wl.items():
                 if k in DEFAULT_STOCKS:
                     upgraded_wl[k] = DEFAULT_STOCKS[k]
-                elif "(" not in v:
-                    new_k, new_v = auto_format_stock_entry(v)
-                    upgraded_wl[new_k] = new_v
+                elif any("\u4e00" <= ch <= "\u9fff" for ch in k) or "美股自選標的" in v or "電子工業" in v:
+                    new_k, new_v = auto_format_stock_entry(k)
+                    if new_k:
+                        upgraded_wl[new_k] = new_v
                 else:
                     upgraded_wl[k] = v
             if "2330.TW" not in upgraded_wl:
@@ -277,26 +330,30 @@ def save_watchlist():
     except Exception:
         pass
 
+# 預設持倉 (已依照代號 A->Z 排序，並更新您截圖中的最新股數與成本)
 DEFAULT_PF = [
-    {"代號": "GOOG", "持股數": 157.0, "平均成本": 0.0, "防守埋伏價(GTC)": 310.0},
-    {"代號": "ON", "持股數": 130.0, "平均成本": 76.12, "防守埋伏價(GTC)": 68.0},
-    {"代號": "GLW", "持股數": 65.0, "平均成本": 163.45, "防守埋伏價(GTC)": 140.0},
-    {"代號": "NOK", "持股數": 900.0, "平均成本": 11.88, "防守埋伏價(GTC)": 8.5},
-    {"代號": "NVTS", "持股數": 850.0, "平均成本": 14.51, "防守埋伏價(GTC)": 9.5},
-    {"代號": "CRDO", "持股數": 41.0, "平均成本": 181.57, "防守埋伏價(GTC)": 160.0},
-    {"代號": "ASTS", "持股數": 140.0, "平均成本": 60.05, "防守埋伏價(GTC)": 40.0},
-    {"代號": "COHR", "持股數": 20.0, "平均成本": 282.67, "防守埋伏價(GTC)": 250.0},
-    {"代號": "BE", "持股數": 11.0, "平均成本": 245.91, "防守埋伏價(GTC)": 220.0},
+    {"代號": "ASTS", "持股數": 140.0, "平均成本": 60.05, "前日收盤價": 0.0, "防守埋伏價(GTC)": 40.0},
+    {"代號": "BE",   "持股數": 11.0,  "平均成本": 245.91, "前日收盤價": 0.0, "防守埋伏價(GTC)": 220.0},
+    {"代號": "COHR", "持股數": 30.0,  "平均成本": 282.67, "前日收盤價": 0.0, "防守埋伏價(GTC)": 250.0},
+    {"代號": "CRDO", "持股數": 54.0,  "平均成本": 179.32, "前日收盤價": 0.0, "防守埋伏價(GTC)": 160.0},
+    {"代號": "GLW",  "持股數": 65.0,  "平均成本": 163.46, "前日收盤價": 0.0, "防守埋伏價(GTC)": 140.0},
+    {"代號": "GOOG", "持股數": 157.0, "平均成本": 0.0,    "前日收盤價": 0.0, "防守埋伏價(GTC)": 310.0},
+    {"代號": "NOK",  "持股數": 900.0, "平均成本": 11.88,  "前日收盤價": 0.0, "防守埋伏價(GTC)": 8.5},
+    {"代號": "NVTS", "持股數": 850.0, "平均成本": 14.51,  "前日收盤價": 0.0, "防守埋伏價(GTC)": 9.5},
+    {"代號": "ON",   "持股數": 130.0, "平均成本": 76.12,  "前日收盤價": 0.0, "防守埋伏價(GTC)": 68.0},
 ]
 
 if "portfolio_df" not in st.session_state:
     if os.path.exists(PORTFOLIO_FILE):
         try:
-            st.session_state.portfolio_df = pd.read_csv(PORTFOLIO_FILE)
+            loaded_pf = pd.read_csv(PORTFOLIO_FILE)
+            if "前日收盤價" not in loaded_pf.columns:
+                loaded_pf.insert(3, "前日收盤價", 0.0)
+            st.session_state.portfolio_df = sort_portfolio_df(loaded_pf)
         except Exception:
-            st.session_state.portfolio_df = pd.DataFrame(DEFAULT_PF)
+            st.session_state.portfolio_df = sort_portfolio_df(pd.DataFrame(DEFAULT_PF))
     else:
-        st.session_state.portfolio_df = pd.DataFrame(DEFAULT_PF)
+        st.session_state.portfolio_df = sort_portfolio_df(pd.DataFrame(DEFAULT_PF))
 
 # --- 資料抓取函數 ---
 @st.cache_data(ttl=1800)
@@ -435,32 +492,31 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與下拉選單 ---
+# --- 主畫面標題與排序後的下拉選單 (修正第 3 點：先 A-Z 再數字排序) ---
 st.title("📊 台美股戰略追蹤儀表板")
 
-# 修正第 4 點：跨重整保留並顯示亮綠色的「✅ 已成功新增」提示框
 if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
     st.success(st.session_state.flash_success_msg)
     st.sidebar.success(st.session_state.flash_success_msg)
     st.session_state.flash_success_msg = ""
 
-ticker_options = list(st.session_state.watchlist.keys())
+ticker_options = get_sorted_watchlist_keys(st.session_state.watchlist)
 if "selected_ticker_key" not in st.session_state or st.session_state.selected_ticker_key not in ticker_options:
     st.session_state.selected_ticker_key = ticker_options[0]
 
 selected_ticker = st.selectbox(
-    "📌 目前檢視標的（點此直接切換個股）：",
+    "📌 目前檢視標的（點此直接切換個股，已依 A-Z 與代號排序）：",
     options=ticker_options,
     index=ticker_options.index(st.session_state.selected_ticker_key),
     format_func=lambda x: st.session_state.watchlist.get(x, x)
 )
 st.session_state.selected_ticker_key = selected_ticker
 
-# --- 側邊欄：新增 / 刪除自選股 ---
+# --- 側邊欄：新增 / 刪除自選股 (修正第 2 點：支援輸入中文股名或代號) ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
 raw_input = st.sidebar.text_input(
-    "輸入代號即可自動帶出名稱與產業",
-    placeholder="例: 2330 或 3037 或 RKLB"
+    "輸入「代號」或「中文股名」皆可自動配對",
+    placeholder="例: 華通 或 2313 或 AMD"
 )
 
 if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
@@ -472,12 +528,13 @@ if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
         st.session_state.flash_success_msg = f"✅ 已成功新增：{formatted_label}"
         st.rerun()
     else:
-        st.sidebar.warning("⚠️ 請先在上方框框輸入股票代號喔！")
+        st.sidebar.warning("⚠️ 請先在上方框框輸入股票名稱或代號喔！")
 
 if st.sidebar.button("➖ 刪除目前檢視的股票", use_container_width=True):
     if len(st.session_state.watchlist) > 1:
         removed_name = st.session_state.watchlist.pop(selected_ticker, selected_ticker)
-        st.session_state.selected_ticker_key = list(st.session_state.watchlist.keys())[0]
+        sorted_remaining = get_sorted_watchlist_keys(st.session_state.watchlist)
+        st.session_state.selected_ticker_key = sorted_remaining[0]
         save_watchlist()
         st.session_state.flash_success_msg = f"🗑️ 已從清單移除：{removed_name}"
         st.rerun()
@@ -492,40 +549,24 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # ==========================================
-# 分頁 1：總覽與部位管理
+# 分頁 1：總覽與部位管理 (修正第 4、5 點：加入前日收盤價、依 A-Z 排序、釘選代號欄)
 # ==========================================
 with tab1:
-    st.subheader("💼 個人持倉成本與 GTC 守株待兔防守座標")
-    st.caption("💡 修改表格內的股數或成本後，請按一下表格下方的 **「💾 確認儲存修改」** 按鈕，數字就會永久鎖定不會跳掉：")
-
-    with st.form("portfolio_edit_form"):
-        edited_pf = st.data_editor(
-            st.session_state.portfolio_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True
-        )
-        save_btn = st.form_submit_button("💾 確認儲存修改", use_container_width=True)
-        if save_btn:
-            st.session_state.portfolio_df = edited_pf.copy()
-            try:
-                edited_pf.to_csv(PORTFOLIO_FILE, index=False)
-            except Exception:
-                pass
-            st.success("✅ 持股與成本已成功儲存！")
-
-    st.markdown("---")
-    st.subheader("🌐 自選股今日行情與均線結構掃描")
+    # 先同步所有自選股與持股的最新收盤價
+    latest_close_map = {}
     summary_rows = []
     with st.spinner("正在同步台美股最新報價與均線位階..."):
-        for tk, name in st.session_state.watchlist.items():
+        for tk in ticker_options:
+            name = st.session_state.watchlist[tk]
             df_h = fetch_stock_history(tk, period="1y", interval="1d")
             if not df_h.empty and len(df_h) >= 2:
-                close_p = df_h["Close"].iloc[-1]
-                prev_p = df_h["Close"].iloc[-2]
+                close_p = float(df_h["Close"].iloc[-1])
+                prev_p = float(df_h["Close"].iloc[-2])
+                latest_close_map[tk] = round(close_p, 2)
+                latest_close_map[tk.split(".")[0]] = round(close_p, 2)
                 chg_pct = ((close_p - prev_p) / prev_p) * 100
-                ma20 = df_h["Close"].rolling(20).mean().iloc[-1] if len(df_h) >= 20 else close_p
-                ma60 = df_h["Close"].rolling(60).mean().iloc[-1] if len(df_h) >= 60 else close_p
+                ma20 = float(df_h["Close"].rolling(20).mean().iloc[-1]) if len(df_h) >= 20 else close_p
+                ma60 = float(df_h["Close"].rolling(60).mean().iloc[-1]) if len(df_h) >= 60 else close_p
                 if close_p >= ma20 and ma20 >= ma60:
                     status = "🟢 站上月/季線 (多頭)"
                 elif close_p < ma20 and close_p >= ma60:
@@ -541,11 +582,60 @@ with tab1:
                     "季線(60MA)": round(ma60, 2),
                     "技術位階判讀": status
                 })
+
+    st.subheader("💼 個人持倉成本與 GTC 守株待兔防守座標")
+    st.caption("💡 已自動依代號 **A 到 Z** 排序並填入 **前日收盤價**（最左側「代號」已凍結固定，往右滑動也不會消失）：")
+
+    # 自動更新持倉表內的「前日收盤價」並依 A-Z 排序
+    pf_current = sort_portfolio_df(st.session_state.portfolio_df)
+    if "前日收盤價" not in pf_current.columns:
+        pf_current.insert(3, "前日收盤價", 0.0)
+
+    for idx, row in pf_current.iterrows():
+        tk_code = str(row["代號"]).strip().upper()
+        if tk_code in latest_close_map:
+            pf_current.at[idx, "前日收盤價"] = latest_close_map[tk_code]
+        else:
+            df_tmp = fetch_stock_history(tk_code, period="5d", interval="1d")
+            if not df_tmp.empty:
+                pf_current.at[idx, "前日收盤價"] = round(float(df_tmp["Close"].iloc[-1]), 2)
+
+    cols_order = ["代號", "持股數", "平均成本", "前日收盤價", "防守埋伏價(GTC)"]
+    pf_current = pf_current[[c for c in cols_order if c in pf_current.columns]]
+    st.session_state.portfolio_df = pf_current
+
+    with st.form("portfolio_edit_form"):
+        edited_pf = st.data_editor(
+            st.session_state.portfolio_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "代號": st.column_config.TextColumn("代號", pinned=True, width="small"),
+                "持股數": st.column_config.NumberColumn("持股數", format="%.0f"),
+                "平均成本": st.column_config.NumberColumn("平均成本", format="%.2f"),
+                "前日收盤價": st.column_config.NumberColumn("前日收盤價", format="%.2f", disabled=True),
+                "防守埋伏價(GTC)": st.column_config.NumberColumn("防守埋伏價(GTC)", format="%.2f"),
+            }
+        )
+        save_btn = st.form_submit_button("💾 確認儲存修改 (自動依 A-Z 排序)", use_container_width=True)
+        if save_btn:
+            sorted_edited = sort_portfolio_df(edited_pf)
+            st.session_state.portfolio_df = sorted_edited.copy()
+            try:
+                sorted_edited.to_csv(PORTFOLIO_FILE, index=False)
+            except Exception:
+                pass
+            st.success("✅ 持股與成本已成功儲存並依 A-Z 排序！")
+            st.rerun()
+
+    st.markdown("---")
+    st.subheader("🌐 自選股今日行情與均線結構掃描")
     if summary_rows:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 # ==========================================
-# 分頁 2：技術線型 (修正第 5、6 點：修復 K 線顯示、移除下方重複圖例、只保留上方彩色看板)
+# 分頁 2：技術線型 (修正第 6 點：左右滑動時自動縮放 Y 軸高低點，K 線永遠不超出畫面)
 # ==========================================
 with tab2:
     st.subheader(f"📈 {st.session_state.watchlist.get(selected_ticker)}")
@@ -568,12 +658,11 @@ with tab2:
         default=["成交量 (Volume)", "KD 指標"]
     )
 
-    # 先抓取足夠長度計算 240MA，再擷取無重複日期的區間繪圖，徹底解決跨年日期重疊導致 K 線消失的問題
     if "日K線" in tf_choice:
         df_raw = fetch_stock_history(selected_ticker, period="2y", interval="1d")
         date_fmt = "%m/%d"
-        plot_tail_bars = 200  # 保留近 200 個交易日(約10個月)供左右滑動，確保 %m/%d 絕對不重複
-        default_bars = 43     # 預設畫面放大顯示最近 2 個月(約43根K棒)
+        plot_tail_bars = 220
+        default_bars = 43
     elif "週K線" in tf_choice:
         df_raw = fetch_stock_history(selected_ticker, period="5y", interval="1wk")
         date_fmt = "%y/%m/%d"
@@ -590,15 +679,14 @@ with tab2:
 
         ma_map = {"5MA": 5, "10MA": 10, "20MA": 20, "60MA": 60, "120MA": 120, "240MA": 240}
         ma_colors = {
-            "5MA": "#FACC15",     # 亮黃
-            "10MA": "#38BDF8",    # 亮青藍
-            "20MA": "#C084FC",    # 亮紫
-            "60MA": "#FB923C",    # 橘紅
-            "120MA": "#4ADE80",   # 亮綠
-            "240MA": "#F472B6"    # 亮粉紅
+            "5MA": "#FACC15",
+            "10MA": "#38BDF8",
+            "20MA": "#C084FC",
+            "60MA": "#FB923C",
+            "120MA": "#4ADE80",
+            "240MA": "#F472B6"
         }
 
-        # 1. 在完整歷史資料上計算所有均線與指標 (確保 240MA 年線數值 100% 準確)
         latest_ma_prices = {}
         for m_label in ALL_MA_OPTIONS:
             win = ma_map[m_label]
@@ -618,7 +706,6 @@ with tab2:
         df_calc["MACD"] = df_calc["DIF"].ewm(span=9, adjust=False).mean()
         df_calc["OSC"] = df_calc["DIF"] - df_calc["MACD"]
 
-        # 2. 擷取繪圖區間並產生唯一日期標籤
         df_k = df_calc.tail(plot_tail_bars).copy()
         df_k["DateLabel"] = df_k.index.strftime(date_fmt)
         if df_k["DateLabel"].duplicated().any():
@@ -628,7 +715,6 @@ with tab2:
         k_now = df_k["K"].iloc[-1]
         d_now = df_k["D"].iloc[-1]
 
-        # 3. 繪製上方「唯一彩色均線看板」(您藍筆圈起來保留的區塊)
         ma_badges_html = [
             f"<span style='color:#FFFFFF; font-weight:700; margin-right:14px; font-size:14px; display:inline-block;'>"
             f"📌 收盤: {latest_close:.2f}</span>"
@@ -654,7 +740,6 @@ with tab2:
             unsafe_allow_html=True
         )
 
-        # 4. 建立 K 線與副圖 (修正第 6 點：showlegend=False 移除下方紅筆圈選的重複圖例)
         num_rows = 1 + len(sub_indicators)
         row_heights = [0.60] + [0.40 / len(sub_indicators)] * len(sub_indicators) if sub_indicators else [1.0]
         fig = make_subplots(rows=num_rows, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=row_heights)
@@ -698,7 +783,6 @@ with tab2:
         start_idx = max(0, total_len - default_bars)
         end_idx = total_len - 1
 
-        # 計算包含 K 線與各條均線的價格上下界，並鎖定垂直誤滑 (fixedrange=True)
         price_cols = ["Low", "High"] + [m for m in ma_selected if m in df_k.columns]
         recent_slice = df_k.iloc[start_idx:]
         y_min = float(recent_slice[price_cols].min().min()) * 0.96
@@ -706,7 +790,7 @@ with tab2:
 
         fig.update_layout(
             height=600,
-            showlegend=False,  # 修正第 6 點：徹底隱藏圖表內部重複的圖例
+            showlegend=False,
             dragmode="pan",
             xaxis_rangeslider_visible=False,
             template="plotly_dark",
@@ -829,3 +913,128 @@ with tab5:
                 st.markdown(f"- **{tag}** `{dn['pubDate']}` | [{dn['title']}]({dn['link']})")
         else:
             st.info("今日暫無最新新聞。")
+
+# --- 核心引擎：1. 徹底攔截下拉選單喚醒手機鍵盤  2. K線左右滑動時自動縮放 Y 軸高低點 ---
+components.html(
+    """
+    <script>
+    (function() {
+        const parentWin = window.parent;
+        const parentDoc = parentWin.document;
+
+        // 1. 徹底攔截 BaseWeb Select 的 focus() 呼叫，防止 Android 彈出虛擬鍵盤
+        if (!parentWin._selectFocusPatched) {
+            const origFocus = parentWin.HTMLElement.prototype.focus;
+            parentWin.HTMLElement.prototype.focus = function() {
+                try {
+                    if (this && this.tagName === 'INPUT' && this.closest && this.closest('div[data-baseweb="select"]')) {
+                        this.setAttribute('inputmode', 'none');
+                        this.setAttribute('readonly', 'readonly');
+                        this.blur();
+                        return;
+                    }
+                } catch (e) {}
+                return origFocus.apply(this, arguments);
+            };
+            parentWin._selectFocusPatched = true;
+        }
+
+        function lockSelectInputs() {
+            try {
+                const inputs = parentDoc.querySelectorAll('div[data-baseweb="select"] input');
+                inputs.forEach(inp => {
+                    inp.setAttribute('inputmode', 'none');
+                    inp.setAttribute('readonly', 'readonly');
+                    inp.setAttribute('tabindex', '-1');
+                    if (parentDoc.activeElement === inp) {
+                        inp.blur();
+                    }
+                });
+            } catch (e) {}
+        }
+
+        // 2. K線圖左右平移時，自動計算當前可見範圍的最高/最低價並動態縮放 Y 軸
+        function attachPlotlyAutoScaleY() {
+            try {
+                const plots = parentDoc.querySelectorAll('.js-plotly-plot');
+                plots.forEach(gd => {
+                    if (gd._autoScaleAttached || !gd._fullLayout) return;
+                    gd._autoScaleAttached = true;
+
+                    function rescaleVisibleY() {
+                        if (gd._isScalingY || !gd._fullLayout || !gd._fullLayout.xaxis) return;
+                        const xr = gd._fullLayout.xaxis.range;
+                        if (!xr || xr.length < 2) return;
+
+                        const traces = gd.data || [];
+                        if (!traces.length || !traces[0].x) return;
+                        const totalLen = traces[0].x.length;
+                        const i0 = Math.max(0, Math.floor(Number(xr[0])));
+                        const i1 = Math.min(totalLen - 1, Math.ceil(Number(xr[1])));
+                        if (i1 < i0) return;
+
+                        let minP = Infinity;
+                        let maxP = -Infinity;
+
+                        traces.forEach(tr => {
+                            const ya = tr.yaxis || 'y';
+                            if (ya !== 'y') return;
+                            if (tr.type === 'candlestick') {
+                                for (let i = i0; i <= i1; i++) {
+                                    const lo = Number(tr.low[i]);
+                                    const hi = Number(tr.high[i]);
+                                    if (!isNaN(lo) && lo < minP) minP = lo;
+                                    if (!isNaN(hi) && hi > maxP) maxP = hi;
+                                }
+                            } else if (tr.type === 'scatter' && tr.y) {
+                                for (let i = i0; i <= i1; i++) {
+                                    const v = Number(tr.y[i]);
+                                    if (!isNaN(v) && v > 0) {
+                                        if (v < minP) minP = v;
+                                        if (v > maxP) maxP = v;
+                                    }
+                                }
+                            }
+                        });
+
+                        if (minP < Infinity && maxP > -Infinity && maxP >= minP) {
+                            const pad = Math.max((maxP - minP) * 0.06, minP * 0.02);
+                            const newMin = minP - pad;
+                            const newMax = maxP + pad;
+                            const curYr = gd._fullLayout.yaxis && gd._fullLayout.yaxis.range;
+                            if (!curYr || Math.abs(curYr[0] - newMin) > 0.01 || Math.abs(curYr[1] - newMax) > 0.01) {
+                                gd._isScalingY = true;
+                                parentWin.Plotly.relayout(gd, {'yaxis.range': [newMin, newMax]}).then(() => {
+                                    gd._isScalingY = false;
+                                }).catch(() => {
+                                    gd._isScalingY = false;
+                                });
+                            }
+                        }
+                    }
+
+                    if (typeof gd.on === 'function') {
+                        gd.on('plotly_relayout', rescaleVisibleY);
+                    }
+                    gd.addEventListener('touchmove', function() {
+                        if (gd._touchTimer) clearTimeout(gd._touchTimer);
+                        gd._touchTimer = setTimeout(rescaleVisibleY, 60);
+                    }, {passive: true});
+                    gd.addEventListener('touchend', function() {
+                        setTimeout(rescaleVisibleY, 80);
+                    }, {passive: true});
+                });
+            } catch (e) {}
+        }
+
+        lockSelectInputs();
+        attachPlotlyAutoScaleY();
+        setInterval(() => {
+            lockSelectInputs();
+            attachPlotlyAutoScaleY();
+        }, 250);
+    })();
+    </script>
+    """,
+    height=1,
+)
