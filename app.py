@@ -12,9 +12,9 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 # --- 網頁與手機版面設定 ---
-st.set_page_config(page_title="台美股戰略追蹤 App", page_icon="📱", layout="wide")
+st.set_page_config(page_title="台美股戰略追蹤 App Ver. 6", page_icon="📱", layout="wide")
 
-# --- 全域 CSS：隱藏輸入框提示字、封鎖下拉選單內文字游標與點擊 ---
+# --- 全域 CSS：徹底移除下拉選單內部搜尋框的聚焦能力 (display:none + visibility:hidden)，100% 封鎖手機鍵盤 ---
 st.markdown(
     """
     <style>
@@ -22,20 +22,29 @@ st.markdown(
         display: none !important;
         visibility: hidden !important;
     }
-    div[data-baseweb="select"] input {
+    div[data-baseweb="select"] input,
+    div[data-testid="stSelectbox"] input,
+    div[data-testid="stMultiSelect"] input {
+        display: none !important;
+        visibility: hidden !important;
         pointer-events: none !important;
         user-select: none !important;
         -webkit-user-select: none !important;
-        caret-color: transparent !important;
         width: 0px !important;
+        height: 0px !important;
         opacity: 0 !important;
+        position: absolute !important;
+        z-index: -9999 !important;
+    }
+    div[data-baseweb="select"] > div {
+        min-height: 42px !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-# --- 修正第 1 點：置於網頁最頂端（最優先載入），徹底攔截下拉選單觸發手機鍵盤 ---
+# --- 雙重防線：將所有下拉選單內部 input 強制設為 disabled 與 display:none ---
 components.html(
     """
     <script>
@@ -44,14 +53,18 @@ components.html(
             const pWin = window.parent;
             const pDoc = pWin.document;
 
-            function lockAllSelectInputs() {
+            function disableSelectInputs() {
                 try {
                     const inputs = pDoc.querySelectorAll('div[data-baseweb="select"] input');
                     inputs.forEach(inp => {
+                        inp.disabled = true;
                         inp.readOnly = true;
+                        inp.setAttribute('disabled', 'disabled');
                         inp.setAttribute('readonly', 'readonly');
                         inp.setAttribute('inputmode', 'none');
                         inp.setAttribute('tabindex', '-1');
+                        inp.style.setProperty('display', 'none', 'important');
+                        inp.style.setProperty('visibility', 'hidden', 'important');
                         if (pDoc.activeElement === inp) {
                             inp.blur();
                         }
@@ -59,40 +72,8 @@ components.html(
                 } catch (e) {}
             }
 
-            // 攔截 HTMLInputElement 與 HTMLElement 的 focus() 呼叫
-            const origInputFocus = pWin.HTMLInputElement.prototype.focus;
-            const origElemFocus = pWin.HTMLElement.prototype.focus;
-
-            function interceptSelectFocus() {
-                try {
-                    if (this && this.closest && this.closest('div[data-baseweb="select"]')) {
-                        this.readOnly = true;
-                        this.setAttribute('readonly', 'readonly');
-                        this.setAttribute('inputmode', 'none');
-                        return;
-                    }
-                } catch (e) {}
-                return origElemFocus.apply(this, arguments);
-            }
-
-            pWin.HTMLInputElement.prototype.focus = interceptSelectFocus;
-            pWin.HTMLElement.prototype.focus = interceptSelectFocus;
-
-            // 在手指觸碰螢幕的第一時間 (capture phase) 強制鎖定所有下拉選單 input
-            ['touchstart', 'pointerdown', 'mousedown', 'focusin'].forEach(evtName => {
-                pDoc.addEventListener(evtName, function(e) {
-                    lockAllSelectInputs();
-                    if (e.target && e.target.tagName === 'INPUT' && e.target.closest && e.target.closest('div[data-baseweb="select"]')) {
-                        e.target.readOnly = true;
-                        e.target.setAttribute('readonly', 'readonly');
-                        e.target.setAttribute('inputmode', 'none');
-                        e.target.blur();
-                    }
-                }, {capture: true, passive: true});
-            });
-
-            lockAllSelectInputs();
-            setInterval(lockAllSelectInputs, 150);
+            disableSelectInputs();
+            setInterval(disableSelectInputs, 100);
         } catch (err) {}
     })();
     </script>
@@ -542,8 +523,8 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與排序後的下拉選單 ---
-st.title("📊 台美股戰略追蹤儀表板")
+# --- 修正第 1 點：在主標題後方加上版號 Ver. 6 ---
+st.title("📊 台美股戰略追蹤儀表板 Ver. 6")
 
 if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
     st.success(st.session_state.flash_success_msg)
@@ -562,7 +543,7 @@ selected_ticker = st.selectbox(
 )
 st.session_state.selected_ticker_key = selected_ticker
 
-# --- 側邊欄：修正第 3 點，使用動態計數器 key 確保新增股票後 100% 自動清空輸入欄 ---
+# --- 側邊欄：新增 / 刪除自選股 (新增後自動清空輸入欄) ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
 if "input_reset_counter" not in st.session_state:
     st.session_state.input_reset_counter = 0
@@ -578,7 +559,7 @@ if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
         code_clean, formatted_label = auto_format_stock_entry(raw_input)
         st.session_state.watchlist[code_clean] = formatted_label
         st.session_state.selected_ticker_key = code_clean
-        st.session_state.input_reset_counter += 1  # 自動切換全新空白輸入欄
+        st.session_state.input_reset_counter += 1
         save_watchlist()
         st.session_state.flash_success_msg = f"✅ 已成功新增：{formatted_label}"
         st.rerun()
@@ -688,7 +669,7 @@ with tab1:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 # ==========================================
-# 分頁 2：技術線型 (修正第 2 點：將圖表與動態 Y 軸縮放引擎封裝於同一 HTML 視窗，滑動 100% 自動縮放高低點)
+# 分頁 2：技術線型
 # ==========================================
 with tab2:
     st.subheader(f"📈 {st.session_state.watchlist.get(selected_ticker)}")
@@ -855,7 +836,6 @@ with tab2:
         fig.update_xaxes(type="category", range=[start_idx - 0.5, end_idx + 0.5], nticks=8, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"))
         fig.update_yaxes(side="right", range=[y_min, y_max], fixedrange=True, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"), row=1, col=1)
 
-        # 預先計算每一根 K 棒（包含開啟的均線）的最低與最高值陣列，直接傳入同一視窗的 Plotly 縮放引擎
         row_min_list = [round(float(v), 4) if pd.notna(v) else None for v in df_k[price_cols].min(axis=1)]
         row_max_list = [round(float(v), 4) if pd.notna(v) else None for v in df_k[price_cols].max(axis=1)]
 
