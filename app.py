@@ -1,5 +1,7 @@
 import os
+import json
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -7,11 +9,12 @@ from plotly.subplots import make_subplots
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
+import re
 
 # --- 網頁與手機版面設定 ---
 st.set_page_config(page_title="台美股戰略追蹤 App", page_icon="📱", layout="wide")
 
-# --- 預設股票清單與中文名稱對照 ---
+# --- 預設股票清單 (已直接加入 2330 台積電，共 17 檔) ---
 DEFAULT_STOCKS = {
     "ASTS": "ASTS (低軌衛星直連 D2D)",
     "BE": "BE (Bloom Energy 燃料電池)",
@@ -22,6 +25,7 @@ DEFAULT_STOCKS = {
     "ON": "ON (安森美 車用/功率半導體)",
     "NOK": "NOK (諾基亞 AI-RAN/光網路)",
     "NVTS": "NVTS (納微 800V GaN/SiC)",
+    "2330.TW": "2330 台積電 (先進製程/CoWoS龍頭)",
     "3491.TWO": "3491 昇達科 (低軌衛星元件)",
     "8027.TWO": "8027 鈦昇 (TGV 玻璃基板設備)",
     "6271.TW": "6271 同欣電 (CIS/高頻模組封測)",
@@ -41,6 +45,7 @@ SEARCH_KEYWORDS = {
     "ON": "ON Semiconductor 安森美",
     "NOK": "Nokia 諾基亞",
     "NVTS": "Navitas NVTS 納微",
+    "2330.TW": "台積電",
     "3491.TWO": "昇達科",
     "8027.TWO": "鈦昇",
     "6271.TW": "同欣電",
@@ -50,8 +55,8 @@ SEARCH_KEYWORDS = {
     "6127.TWO": "九豪"
 }
 
-# 內建核實財報保底資料庫 (當 Yahoo 雲端 IP 限流時自動啟用，確保絕不顯示 0.00%)
 FALLBACK_FINANCIALS = {
+    "2330.TW": {"rev_growth": 36.5, "gm": 57.8, "om": 47.5, "nm": 42.1, "roe": 31.8, "cr": 2.45, "qr": 2.15, "de": 21.0, "target": 1500.0, "f_pe": 22.5},
     "CRDO": {"rev_growth": 68.5, "gm": 68.8, "om": 22.4, "nm": 20.1, "roe": 16.5, "cr": 5.8, "qr": 5.1, "de": 3.2, "target": 215.0, "f_pe": 45.2},
     "NVTS": {"rev_growth": -18.5, "gm": 38.12, "om": -269.3, "nm": -856.9, "roe": -52.6, "cr": 21.79, "qr": 20.34, "de": 0.64, "target": 15.0, "f_pe": "尚未獲利(轉機期)"},
     "NOK":  {"rev_growth": 12.4, "gm": 44.23, "om": 3.27, "nm": 2.8, "roe": 3.46, "cr": 1.51, "qr": 1.22, "de": 15.85, "target": 12.5, "f_pe": 14.8},
@@ -71,12 +76,31 @@ FALLBACK_FINANCIALS = {
 }
 
 PORTFOLIO_FILE = "portfolio_saved.csv"
+WATCHLIST_FILE = "watchlist_saved.json"
 
-# 初始化自選股清單
+# 載入與儲存自選股清單 (確保新增/刪除股票能永久保存)
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = DEFAULT_STOCKS.copy()
+    if os.path.exists(WATCHLIST_FILE):
+        try:
+            with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+                saved_wl = json.load(f)
+            # 確保 2330.TW 也自動補進既有清單中
+            if "2330.TW" not in saved_wl:
+                saved_wl["2330.TW"] = DEFAULT_STOCKS["2330.TW"]
+            st.session_state.watchlist = saved_wl
+        except Exception:
+            st.session_state.watchlist = DEFAULT_STOCKS.copy()
+    else:
+        st.session_state.watchlist = DEFAULT_STOCKS.copy()
 
-# 初始化個人持倉紀錄 (已同步您影片中最新修改的數值，並支援檔案儲存)
+def save_watchlist():
+    try:
+        with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state.watchlist, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+# 初始化個人持倉紀錄
 DEFAULT_PF = [
     {"代號": "GOOG", "持股數": 157.0, "平均成本": 0.0, "防守埋伏價(GTC)": 310.0},
     {"代號": "ON", "持股數": 130.0, "平均成本": 76.12, "防守埋伏價(GTC)": 68.0},
@@ -100,7 +124,7 @@ if "portfolio_df" not in st.session_state:
 
 # --- 資料抓取函數 ---
 @st.cache_data(ttl=1800)
-def fetch_stock_history(ticker, period="1y", interval="1d"):
+def fetch_stock_history(ticker, period="2y", interval="1d"):
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period=period, interval=interval)
@@ -113,7 +137,6 @@ def fetch_stock_history(ticker, period="1y", interval="1d"):
 
 @st.cache_data(ttl=3600)
 def fetch_comprehensive_financials(ticker):
-    """三重防呆抓取財報：1.Yahoo Info -> 2.財報原始表直接計算 -> 3.核實保底庫"""
     fb = FALLBACK_FINANCIALS.get(ticker, {
         "rev_growth": 10.0, "gm": 30.0, "om": 10.0, "nm": 8.0,
         "roe": 10.0, "cr": 2.0, "qr": 1.5, "de": 30.0, "target": "無資料", "f_pe": "無資料"
@@ -122,20 +145,13 @@ def fetch_comprehensive_financials(ticker):
     inc, bal, inst = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     try:
         stock = yf.Ticker(ticker)
-        try:
-            inc = stock.quarterly_income_stmt
-        except Exception:
-            pass
-        try:
-            bal = stock.quarterly_balance_sheet
-        except Exception:
-            pass
-        try:
-            inst = stock.institutional_holders
-        except Exception:
-            pass
+        try: inc = stock.quarterly_income_stmt
+        except Exception: pass
+        try: bal = stock.quarterly_balance_sheet
+        except Exception: pass
+        try: inst = stock.institutional_holders
+        except Exception: pass
 
-        # 第二層：直接從損益表與資產負債表計算真實比率
         if not inc.empty:
             cols = inc.columns
             rev = inc.loc["Total Revenue", cols[0]] if "Total Revenue" in inc.index else None
@@ -171,7 +187,6 @@ def fetch_comprehensive_financials(ticker):
             if pd.notna(debt) and pd.notna(eq) and eq != 0:
                 fb["de"] = float((debt / abs(eq)) * 100)
 
-        # 第一層：若 Yahoo Info 有回應則優先更新目標價與 Forward PE
         try:
             info = stock.info or {}
             if info.get("grossMargins"): fb["gm"] = info["grossMargins"] * 100
@@ -193,16 +208,11 @@ def fetch_comprehensive_financials(ticker):
 
 @st.cache_data(ttl=3600)
 def fetch_tw_monthly_revenue(ticker):
-    """針對台股：從 FinMind 免費公開 API 抓取最新台灣月營收"""
     if not (ticker.endswith(".TW") or ticker.endswith(".TWO")):
         return pd.DataFrame()
     stock_id = ticker.split(".")[0]
     url = "https://api.finmindtrade.com/api/v4/data"
-    params = {
-        "dataset": "TaiwanStockMonthRevenue",
-        "data_id": stock_id,
-        "start_date": "2025-01-01"
-    }
+    params = {"dataset": "TaiwanStockMonthRevenue", "data_id": stock_id, "start_date": "2025-01-01"}
     try:
         resp = requests.get(url, params=params, timeout=6)
         data = resp.json()
@@ -249,35 +259,64 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與「直接切換個股下拉選單」(修正第 2 點：移至藍筆圈選處) ---
+# --- 主畫面標題與「不跳出手機鍵盤」的下拉選單 ---
 st.title("📊 台美股戰略追蹤儀表板")
 
 ticker_options = list(st.session_state.watchlist.keys())
+if "selected_ticker_key" not in st.session_state or st.session_state.selected_ticker_key not in ticker_options:
+    st.session_state.selected_ticker_key = ticker_options[0]
+
 selected_ticker = st.selectbox(
     "📌 目前檢視標的（點此直接切換個股）：",
     options=ticker_options,
+    index=ticker_options.index(st.session_state.selected_ticker_key),
     format_func=lambda x: st.session_state.watchlist.get(x, x)
 )
+st.session_state.selected_ticker_key = selected_ticker
 
-# 側邊欄保留新增/刪除自選股功能
+# --- 側邊欄：修正第 1 點，改為「單一智慧輸入格＋Form表單送出」，怎麼打都能成功新增！ ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
-new_code = st.sidebar.text_input("輸入代號 (例: RKLB 或 2330.TW)", placeholder="輸入美股或台股代號")
-new_name = st.sidebar.text_input("輸入備註名稱 (選填)", placeholder="例: 2330 台積電")
-col_add, col_del = st.sidebar.columns(2)
-with col_add:
-    if st.button("➕ 新增股票", use_container_width=True):
-        if new_code:
-            code_clean = new_code.strip().upper()
-            if code_clean.isdigit():
-                code_clean = f"{code_clean}.TW"
-            label = f"{code_clean} ({new_name})" if new_name else code_clean
+with st.sidebar.form("add_stock_form", clear_on_submit=True):
+    raw_input = st.text_input(
+        "輸入代號與名稱 (同一格輸入即可)",
+        placeholder="例: 2330 台積電 或 RKLB"
+    )
+    add_submitted = st.form_submit_button("➕ 確認新增股票", use_container_width=True)
+    if add_submitted:
+        if raw_input.strip():
+            text = raw_input.strip()
+            # 智慧拆解代號與中文名稱 (例如輸入 "2330 台積電" 或 "2330台積電" 或 "RKLB")
+            match = re.match(r"^([A-Za-z0-9\.]+)\s*(.*)$", text)
+            if match:
+                code_part = match.group(1).upper()
+                name_part = match.group(2).strip()
+            else:
+                code_part = text.upper()
+                name_part = ""
+
+            if code_part.isdigit():
+                num_code = code_part
+                code_clean = f"{num_code}.TW"
+                label = f"{num_code} {name_part}" if name_part else f"{num_code}.TW"
+            else:
+                code_clean = code_part
+                label = f"{code_clean} ({name_part})" if name_part else code_clean
+
             st.session_state.watchlist[code_clean] = label
+            st.session_state.selected_ticker_key = code_clean
+            save_watchlist()
+            st.success(f"✅ 已成功新增：{label}")
             st.rerun()
-with col_del:
-    if st.button("➖ 刪除目前", use_container_width=True):
-        if len(st.session_state.watchlist) > 1:
-            del st.session_state.watchlist[selected_ticker]
-            st.rerun()
+        else:
+            st.warning("⚠️ 請先在上方框框輸入股票代號喔！")
+
+if st.sidebar.button("➖ 刪除目前檢視的股票", use_container_width=True):
+    if len(st.session_state.watchlist) > 1:
+        removed_name = st.session_state.watchlist.pop(selected_ticker, selected_ticker)
+        st.session_state.selected_ticker_key = list(st.session_state.watchlist.keys())[0]
+        save_watchlist()
+        st.sidebar.info(f"已刪除：{removed_name}")
+        st.rerun()
 
 # 建立五大核心功能分頁
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -289,7 +328,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # ==========================================
-# 分頁 1：總覽與部位管理 (修正第 1 點：加入 Form 表單鎖定，修改一次到位不跳掉)
+# 分頁 1：總覽與部位管理
 # ==========================================
 with tab1:
     st.subheader("💼 個人持倉成本與 GTC 守株待兔防守座標")
@@ -342,19 +381,21 @@ with tab1:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 # ==========================================
-# 分頁 2：技術線型 (修正第 3、4 點：極細線條、預設顯示 2 個月、單指直接左右滑動)
+# 分頁 2：技術線型 (修正第 3、4 點：預設載入 6 條均線，且清楚顯示每條均線的最新均價)
 # ==========================================
 with tab2:
     st.subheader(f"📈 {st.session_state.watchlist.get(selected_ticker)}")
 
+    ALL_MA_OPTIONS = ["5MA", "10MA", "20MA", "60MA", "120MA", "240MA"]
+
     col_t1, col_t2 = st.columns([1, 2])
     with col_t1:
-        tf_choice = st.radio("選擇 K 線週期：", ["日K線 (預設看近2個月，可往左滑看1年)", "週K線 (3年)", "60分K線 (近1個月)"], horizontal=True)
+        tf_choice = st.radio("選擇 K 線週期：", ["日K線 (預設看近2個月，可往左滑)", "週K線 (3年)", "60分K線 (近1個月)"], horizontal=True)
     with col_t2:
-        ma_Selected = st.multiselect(
-            "勾選要【新增/刪除】的均線：",
-            options=["MA5", "MA10", "MA20 (月線)", "MA60 (季線)", "MA120 (半年線)", "MA240 (年線)"],
-            default=["MA5", "MA10", "MA20 (月線)", "MA60 (季線)"]
+        ma_selected = st.multiselect(
+            "勾選要【新增/刪除】的均線 (預設全開)：",
+            options=ALL_MA_OPTIONS,
+            default=ALL_MA_OPTIONS
         )
 
     sub_indicators = st.multiselect(
@@ -363,37 +404,58 @@ with tab2:
         default=["成交量 (Volume)", "KD 指標"]
     )
 
+    # 抓取 2 年日 K 資料，確保 240MA (年線) 隨時都有完整數值
     if "日K線" in tf_choice:
-        df_k = fetch_stock_history(selected_ticker, period="1y", interval="1d")
+        df_k = fetch_stock_history(selected_ticker, period="2y", interval="1d")
         date_fmt = "%m/%d"
-        default_bars = 43  # 預設顯示約 2 個月(43個交易日)，往右拉可看前幾個月
+        default_bars = 43
     elif "週K線" in tf_choice:
-        df_k = fetch_stock_history(selected_ticker, period="3y", interval="1wk")
+        df_k = fetch_stock_history(selected_ticker, period="5y", interval="1wk")
         date_fmt = "%y/%m/%d"
         default_bars = 35
     else:
-        df_k = fetch_stock_history(selected_ticker, period="1mo", interval="60m")
+        df_k = fetch_stock_history(selected_ticker, period="2mo", interval="60m")
         date_fmt = "%m/%d %H:%M"
         default_bars = 50
 
     if not df_k.empty:
-        # 建立無週末斷層的日期標籤，讓手指左右滑動順暢不卡頓
         df_k = df_k.copy()
         df_k["DateLabel"] = df_k.index.strftime(date_fmt)
 
-        # 計算均線
-        ma_map = {"MA5": 5, "MA10": 10, "MA20 (月線)": 20, "MA60 (季線)": 60, "MA120 (半年線)": 120, "MA240 (年線)": 240}
+        ma_map = {"5MA": 5, "10MA": 10, "20MA": 20, "60MA": 60, "120MA": 120, "240MA": 240}
         ma_colors = {
-            "MA5": "#FACC15",         # 亮黃 (如您的看盤軟體 5T)
-            "MA10": "#38BDF8",        # 亮青藍 (如您的看盤軟體 10T)
-            "MA20 (月線)": "#C084FC", # 亮紫 (如您的看盤軟體 20T)
-            "MA60 (季線)": "#FB923C", # 橘紅
-            "MA120 (半年線)": "#4ADE80",
-            "MA240 (年線)": "#F472B6"
+            "5MA": "#FACC15",     # 亮黃
+            "10MA": "#38BDF8",    # 亮青藍
+            "20MA": "#C084FC",    # 亮紫
+            "60MA": "#FB923C",    # 橘紅
+            "120MA": "#4ADE80",   # 亮綠
+            "240MA": "#F472B6"    # 亮粉紅
         }
-        for m_label in ma_Selected:
+
+        # 計算所有均線與最新一日均價
+        latest_ma_prices = {}
+        for m_label in ALL_MA_OPTIONS:
             win = ma_map[m_label]
             df_k[m_label] = df_k["Close"].rolling(window=win).mean()
+            val = df_k[m_label].iloc[-1]
+            latest_ma_prices[m_label] = f"{val:.2f}" if pd.notna(val) else "計算中"
+
+        # 在圖表正上方建立高對比「彩色均線價格看板」(如同專業看盤軟體)
+        ma_badges_html = []
+        for m_label in ma_selected:
+            color = ma_colors[m_label]
+            price_str = latest_ma_prices[m_label]
+            ma_badges_html.append(
+                f"<span style='color:{color}; font-weight:700; margin-right:12px; font-size:14px; display:inline-block;'>"
+                f"● {m_label}: {price_str}</span>"
+            )
+        if ma_badges_html:
+            st.markdown(
+                f"<div style='background-color:#0B0F19; padding:10px 14px; border-radius:8px; border:1px solid #334155; margin-bottom:6px;'>"
+                f"<div style='color:#94A3B8; font-size:12px; margin-bottom:4px;'>📌 最新均線價格（對應下方線圖顏色）：</div>"
+                f"{''.join(ma_badges_html)}</div>",
+                unsafe_allow_html=True
+            )
 
         # 計算 KD
         low_min = df_k["Low"].rolling(9).min()
@@ -413,20 +475,21 @@ with tab2:
         row_heights = [0.58] + [0.42 / len(sub_indicators)] * len(sub_indicators) if sub_indicators else [1.0]
         fig = make_subplots(rows=num_rows, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=row_heights)
 
-        # 主圖 K線：將線條與影線改為最細 (width=0.9)，紅漲綠跌
+        latest_close = df_k["Close"].iloc[-1]
         fig.add_trace(go.Candlestick(
             x=df_k["DateLabel"],
             open=df_k["Open"], high=df_k["High"], low=df_k["Low"], close=df_k["Close"],
             increasing_line_color="#EF4444", decreasing_line_color="#10B981",
             increasing_fillcolor="#EF4444", decreasing_fillcolor="#10B981",
             increasing_line_width=0.9, decreasing_line_width=0.9,
-            name="K線"
+            name=f"K線 ({latest_close:.2f})"
         ), row=1, col=1)
 
-        # 均線：全部改為極細線條 (width=1.0)
-        for m_label in ma_Selected:
+        # 均線圖例直接顯示「5MA: 價格」，且線條保持極細 (width=1.0)
+        for m_label in ma_selected:
+            legend_name = f"{m_label}: {latest_ma_prices[m_label]}"
             fig.add_trace(go.Scatter(
-                x=df_k["DateLabel"], y=df_k[m_label], mode="lines", name=m_label,
+                x=df_k["DateLabel"], y=df_k[m_label], mode="lines", name=legend_name,
                 line=dict(color=ma_colors[m_label], width=1.0)
             ), row=1, col=1)
 
@@ -434,13 +497,15 @@ with tab2:
         if "成交量 (Volume)" in sub_indicators:
             vol_colors = ["#EF4444" if c >= o else "#10B981" for c, o in zip(df_k["Close"], df_k["Open"])]
             fig.add_trace(go.Bar(x=df_k["DateLabel"], y=df_k["Volume"], name="成交量", marker_color=vol_colors), row=curr_row, col=1)
-            fig.update_yaxes(side="right", row=curr_row, col=1)
+            fig.update_yaxes(side="right", tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
             curr_row += 1
 
         if "KD 指標" in sub_indicators:
-            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["K"], name="K9", line=dict(color="#FACC15", width=1.0)), row=curr_row, col=1)
-            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["D"], name="D9", line=dict(color="#38BDF8", width=1.0)), row=curr_row, col=1)
-            fig.update_yaxes(range=[0, 100], side="right", fixedrange=True, row=curr_row, col=1)
+            k_now = df_k["K"].iloc[-1]
+            d_now = df_k["D"].iloc[-1]
+            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["K"], name=f"K9: {k_now:.1f}", line=dict(color="#FACC15", width=1.0)), row=curr_row, col=1)
+            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["D"], name=f"D9: {d_now:.1f}", line=dict(color="#38BDF8", width=1.0)), row=curr_row, col=1)
+            fig.update_yaxes(range=[0, 100], side="right", fixedrange=True, tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
             curr_row += 1
 
         if "MACD 指標" in sub_indicators:
@@ -448,53 +513,53 @@ with tab2:
             fig.add_trace(go.Bar(x=df_k["DateLabel"], y=df_k["OSC"], name="MACD柱", marker_color=osc_colors), row=curr_row, col=1)
             fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["DIF"], name="DIF", line=dict(color="#FACC15", width=1.0)), row=curr_row, col=1)
             fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["MACD"], name="MACD", line=dict(color="#38BDF8", width=1.0)), row=curr_row, col=1)
-            fig.update_yaxes(side="right", row=curr_row, col=1)
+            fig.update_yaxes(side="right", tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
 
-        # 設定預設只顯示最近 2 個月 (約 43 根 K 棒)，並支援手指直接往右滑動看前幾個月
         total_len = len(df_k)
         start_idx = max(0, total_len - default_bars)
         end_idx = total_len - 1
 
-        # 計算近 2 個月的高低點作為初始 Y 軸範圍，讓畫面清晰飽滿
         recent_slice = df_k.iloc[start_idx:]
-        y_min = float(recent_slice["Low"].min()) * 0.96
-        y_max = float(recent_slice["High"].max()) * 1.04
+        y_min = float(recent_slice["Low"].min()) * 0.95
+        y_max = float(recent_slice["High"].max()) * 1.05
 
+        # 強制設定圖例與座標軸文字為高對比亮白色 (#FFFFFF)，徹底解決黑底黑字看不見的問題
         fig.update_layout(
-            height=640,
-            dragmode="pan",  # 關鍵設定：手指直接左右滑動平移！
+            height=650,
+            dragmode="pan",
             xaxis_rangeslider_visible=False,
             template="plotly_dark",
             paper_bgcolor="#0B0F19",
             plot_bgcolor="#0B0F19",
-            margin=dict(l=5, r=45, t=35, b=15),
-            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, font=dict(size=10))
+            font=dict(color="#FFFFFF", size=11),
+            margin=dict(l=5, r=48, t=55, b=15),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.01,
+                xanchor="left",
+                x=0,
+                bgcolor="rgba(15, 23, 42, 0.85)",
+                font=dict(color="#FFFFFF", size=11)
+            )
         )
-        fig.update_xaxes(type="category", range=[start_idx - 0.5, end_idx + 0.5], nticks=8, showgrid=True, gridcolor="#1E293B")
-        fig.update_yaxes(side="right", range=[y_min, y_max], showgrid=True, gridcolor="#1E293B", row=1, col=1)
+        fig.update_xaxes(type="category", range=[start_idx - 0.5, end_idx + 0.5], nticks=8, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"))
+        fig.update_yaxes(side="right", range=[y_min, y_max], showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"), row=1, col=1)
 
-        st.caption("👆 **操作小技巧**：現在已經設為「看盤滑動模式」，請直接用手指在圖表上**左右滑動**，即可順暢查看前幾個月的歷史線型！")
         st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displayModeBar": True})
     else:
         st.warning("暫時無法載入線圖資料，請確認網路連線或股票代號。")
 
 # ==========================================
-# 分頁 3：財報紅黃綠燈、營收與未來訂單分析 (修正第 5 點：三重防呆確保資料完整呈現)
+# 分頁 3：財報紅黃綠燈、營收與未來訂單分析
 # ==========================================
 with tab3:
     st.subheader(f"💰 {st.session_state.watchlist.get(selected_ticker)} 財報紅黃綠燈體檢與未來訂單展望")
     fb, inc, bal, _ = fetch_comprehensive_financials(selected_ticker)
 
-    gm = fb["gm"]
-    om = fb["om"]
-    nm = fb["nm"]
-    roe = fb["roe"]
-    cr = fb["cr"]
-    qr = fb["qr"]
-    de = fb["de"]
-    rev_growth = fb["rev_growth"]
-    target_price = fb["target"]
-    f_pe = fb["f_pe"]
+    gm, om, nm, roe = fb["gm"], fb["om"], fb["nm"], fb["roe"]
+    cr, qr, de, rev_growth = fb["cr"], fb["qr"], fb["de"], fb["rev_growth"]
+    target_price, f_pe = fb["target"], fb["f_pe"]
 
     def light_gm(v): return "🟢 優異 (>=40%)" if v >= 40 else ("🟡 爬坡中 (20~40%)" if v >= 20 else "🔴 偏低 (<20%)")
     def light_om(v): return "🟢 獲利穩健 (>15%)" if v >= 15 else ("🟡 損平邊緣 (0~15%)" if v >= 0 else "🔴 研發/重組虧損 (<0%)")
@@ -519,7 +584,6 @@ with tab3:
     ])
     st.dataframe(health_df, use_container_width=True, hide_index=True)
 
-    # 若為台股，自動抓取並畫出「最新台灣月營收趨勢圖」
     tw_rev_df = fetch_tw_monthly_revenue(selected_ticker)
     if not tw_rev_df.empty:
         st.markdown("#### 📊 台股每月最新公布營收趨勢 (單位：新台幣億元)")
@@ -529,7 +593,6 @@ with tab3:
         rev_series = inc.loc["Total Revenue"].dropna().iloc[:6][::-1]
         st.bar_chart(rev_series)
 
-    # 未來訂單與 Backlog 動態抓取
     st.markdown("#### 📦 未來訂單 (Backlog)、產能與法說指引最新情報")
     kw_order = f"{SEARCH_KEYWORDS.get(selected_ticker, selected_ticker)} (訂單 OR 營收 OR 財報 OR 產能 OR 法說 OR backlog OR guidance OR revenue)"
     order_news = fetch_google_news(kw_order, max_items=6)
@@ -594,3 +657,23 @@ with tab5:
                 st.markdown(f"- **{tag}** `{dn['pubDate']}` | [{dn['title']}]({dn['link']})")
         else:
             st.info("今日暫無最新新聞。")
+
+# --- 修正第 2 點：強制關閉手機點選下拉選單時自動彈出鍵盤的機制 ---
+components.html(
+    """
+    <script>
+    function disableSelectKeyboard() {
+        const parentDoc = window.parent.document;
+        const selectInputs = parentDoc.querySelectorAll('div[data-baseweb="select"] input');
+        selectInputs.forEach(input => {
+            input.setAttribute('inputmode', 'none');
+            input.setAttribute('readonly', 'readonly');
+        });
+    }
+    disableSelectKeyboard();
+    const observer = new MutationObserver(disableSelectKeyboard);
+    observer.observe(window.parent.document.body, { childList: true, subtree: true });
+    </script>
+    """,
+    height=0,
+)
