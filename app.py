@@ -14,7 +14,7 @@ from urllib.parse import quote
 # --- 網頁與手機版面設定 ---
 st.set_page_config(page_title="台美股戰略追蹤 App", page_icon="📱", layout="wide")
 
-# --- 全域 CSS：隱藏輸入框提示字、防止下拉選單觸發手機鍵盤 ---
+# --- 全域 CSS：隱藏輸入框提示字、封鎖下拉選單內文字游標與點擊 ---
 st.markdown(
     """
     <style>
@@ -30,20 +30,79 @@ st.markdown(
         width: 0px !important;
         opacity: 0 !important;
     }
-    iframe[title="streamlit_components_v1.html_v1"] {
-        height: 1px !important;
-        min-height: 1px !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        border: none !important;
-    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
+# --- 修正第 1 點：置於網頁最頂端（最優先載入），徹底攔截下拉選單觸發手機鍵盤 ---
+components.html(
+    """
+    <script>
+    (function() {
+        try {
+            const pWin = window.parent;
+            const pDoc = pWin.document;
+
+            function lockAllSelectInputs() {
+                try {
+                    const inputs = pDoc.querySelectorAll('div[data-baseweb="select"] input');
+                    inputs.forEach(inp => {
+                        inp.readOnly = true;
+                        inp.setAttribute('readonly', 'readonly');
+                        inp.setAttribute('inputmode', 'none');
+                        inp.setAttribute('tabindex', '-1');
+                        if (pDoc.activeElement === inp) {
+                            inp.blur();
+                        }
+                    });
+                } catch (e) {}
+            }
+
+            // 攔截 HTMLInputElement 與 HTMLElement 的 focus() 呼叫
+            const origInputFocus = pWin.HTMLInputElement.prototype.focus;
+            const origElemFocus = pWin.HTMLElement.prototype.focus;
+
+            function interceptSelectFocus() {
+                try {
+                    if (this && this.closest && this.closest('div[data-baseweb="select"]')) {
+                        this.readOnly = true;
+                        this.setAttribute('readonly', 'readonly');
+                        this.setAttribute('inputmode', 'none');
+                        return;
+                    }
+                } catch (e) {}
+                return origElemFocus.apply(this, arguments);
+            }
+
+            pWin.HTMLInputElement.prototype.focus = interceptSelectFocus;
+            pWin.HTMLElement.prototype.focus = interceptSelectFocus;
+
+            // 在手指觸碰螢幕的第一時間 (capture phase) 強制鎖定所有下拉選單 input
+            ['touchstart', 'pointerdown', 'mousedown', 'focusin'].forEach(evtName => {
+                pDoc.addEventListener(evtName, function(e) {
+                    lockAllSelectInputs();
+                    if (e.target && e.target.tagName === 'INPUT' && e.target.closest && e.target.closest('div[data-baseweb="select"]')) {
+                        e.target.readOnly = true;
+                        e.target.setAttribute('readonly', 'readonly');
+                        e.target.setAttribute('inputmode', 'none');
+                        e.target.blur();
+                    }
+                }, {capture: true, passive: true});
+            });
+
+            lockAllSelectInputs();
+            setInterval(lockAllSelectInputs, 150);
+        } catch (err) {}
+    })();
+    </script>
+    """,
+    height=1,
+)
+
 # --- 預設股票清單 (標準模板格式) ---
 DEFAULT_STOCKS = {
+    "AMD": "AMD (超微 AI GPU/伺服器CPU)",
     "ASTS": "ASTS (低軌衛星直連 D2D)",
     "BE": "BE (Bloom Energy 燃料電池)",
     "COHR": "COHR (Coherent 光通訊/SiC)",
@@ -55,6 +114,7 @@ DEFAULT_STOCKS = {
     "ON": "ON (安森美 車用/功率半導體)",
     "2313.TW": "2313 華通 (低軌衛星/高階HDI板)",
     "2330.TW": "2330 台積電 (先進製程/CoWoS龍頭)",
+    "2408.TW": "2408 南亞科 (DRAM記憶體製造)",
     "3037.TW": "3037 欣興 (ABF載板/AI伺服器)",
     "3491.TWO": "3491 昇達科 (低軌衛星元件)",
     "3714.TW": "3714 富采 (Micro LED/CPO光源)",
@@ -65,10 +125,11 @@ DEFAULT_STOCKS = {
     "8027.TWO": "8027 鈦昇 (TGV 玻璃基板設備)"
 }
 
-# --- 內建台美股智慧模板庫 (支援輸入「代號」或「中文公司名稱」雙向查找) ---
+# --- 內建台美股智慧模板庫 ---
 KNOWN_STOCK_PROFILES = {
     "2313": ("2313.TW", "2313 華通 (低軌衛星/高階HDI板)"),
     "2330": ("2330.TW", "2330 台積電 (先進製程/CoWoS龍頭)"),
+    "2408": ("2408.TW", "2408 南亞科 (DRAM記憶體製造)"),
     "2454": ("2454.TW", "2454 聯發科 (IC設計/邊緣AI晶片)"),
     "2317": ("2317.TW", "2317 鴻海 (AI伺服器機櫃龍頭)"),
     "2308": ("2308.TW", "2308 台達電 (AI伺服器電源/散熱)"),
@@ -128,7 +189,6 @@ KNOWN_STOCK_PROFILES = {
 
 @st.cache_data(ttl=86400)
 def load_tw_stock_directory():
-    """載入全台股上市櫃 1800+ 檔股票名冊，支援直接輸入『中文公司名稱』反查代號與產業"""
     try:
         url = "https://api.finmindtrade.com/api/v4/data"
         resp = requests.get(url, params={"dataset": "TaiwanStockInfo"}, timeout=8)
@@ -143,24 +203,20 @@ def load_tw_stock_directory():
     return pd.DataFrame()
 
 def auto_format_stock_entry(raw_input_str):
-    """修正第 2 點：不論輸入『代號(2313)』或『中文股名(華通)』，皆自動轉為標準模板格式"""
     text = raw_input_str.strip()
     if not text:
         return "", ""
 
-    # 1. 先檢查是否直接命中內建智慧庫的「中文名稱」或「代號」
     clean_query = text.replace(".TW", "").replace(".TWO", "").strip()
     if clean_query.upper() in KNOWN_STOCK_PROFILES:
         return KNOWN_STOCK_PROFILES[clean_query.upper()]
 
     for code_key, (full_tk, label_str) in KNOWN_STOCK_PROFILES.items():
-        # 例如使用者只輸入 "華通" 或 "台積電" 或 "昇達科"
         if clean_query in label_str:
             parts = label_str.split(" ")
             if len(parts) >= 2 and (clean_query == parts[1] or clean_query in parts[1]):
                 return full_tk, label_str
 
-    # 2. 拆解輸入字串
     match = re.match(r"^([A-Za-z0-9\.]+)\s*(.*)$", text)
     if match:
         code_raw = match.group(1).upper()
@@ -171,9 +227,7 @@ def auto_format_stock_entry(raw_input_str):
 
     tw_dir = load_tw_stock_directory()
 
-    # 3. 情境 A：使用者直接輸入「中文公司名稱」（例如：「華通」、「奇鋐」、「長榮」）
     if not code_raw or any("\u4e00" <= ch <= "\u9fff" for ch in text):
-        # 嘗試從字串中提取 4 碼數字（若有）與中文名稱
         num_match = re.search(r"(\d{4})", text)
         chinese_only = re.sub(r"[A-Za-z0-9\.\(\)（）\s]+", "", text)
 
@@ -189,7 +243,6 @@ def auto_format_stock_entry(raw_input_str):
                     return f"{base_code}{sfx}", f"{base_code} {r['stock_name']} ({r.get('industry_category', '台股標的')})"
 
         if chinese_only and not tw_dir.empty:
-            # 精確比對或模糊比對台股中文名稱
             exact_row = tw_dir[tw_dir["stock_name"] == chinese_only]
             if exact_row.empty:
                 exact_row = tw_dir[tw_dir["stock_name"].str.contains(re.escape(chinese_only), na=False)]
@@ -202,7 +255,6 @@ def auto_format_stock_entry(raw_input_str):
                 ind = r.get("industry_category", "台股核心標的")
                 return f"{sid}{sfx}", f"{sid} {r['stock_name']} ({ind})"
 
-    # 4. 情境 B：使用者輸入台股 4 碼數字代號（例如：「2313」）
     base_code = code_raw.replace(".TW", "").replace(".TWO", "")
     if base_code.isdigit():
         if base_code in KNOWN_STOCK_PROFILES:
@@ -216,7 +268,6 @@ def auto_format_stock_entry(raw_input_str):
                 return f"{base_code}{sfx}", f"{base_code} {r['stock_name']} ({ind})"
         return f"{base_code}.TW", f"{base_code} {user_note or '台股標的'} (台股自選)"
 
-    # 5. 情境 C：美股英文代號（例如：「AMD」、「NVDA」）
     full_ticker = code_raw if code_raw else text.upper()
     if full_ticker in KNOWN_STOCK_PROFILES:
         return KNOWN_STOCK_PROFILES[full_ticker]
@@ -231,7 +282,6 @@ def auto_format_stock_entry(raw_input_str):
     return full_ticker, f"{full_ticker} (美股自選標的)"
 
 def get_sorted_watchlist_keys(wl_dict):
-    """修正第 3 點：先依英文字母排序 (A->Z)，再依台股數字代號排序 (小->大)"""
     def sort_key(tk):
         base = tk.split(".")[0].strip()
         if base.isdigit():
@@ -243,7 +293,6 @@ def get_sorted_watchlist_keys(wl_dict):
     return sorted(wl_dict.keys(), key=sort_key)
 
 def sort_portfolio_df(df):
-    """修正第 5 點：個人持倉表格依照代號從 A 到 Z 排序"""
     if df.empty or "代號" not in df.columns:
         return df
     df_copy = df.copy()
@@ -252,6 +301,7 @@ def sort_portfolio_df(df):
     return df_copy
 
 SEARCH_KEYWORDS = {
+    "AMD": "AMD 超微",
     "ASTS": "AST SpaceMobile OR ASTS",
     "BE": "Bloom Energy",
     "COHR": "Coherent COHR",
@@ -263,6 +313,7 @@ SEARCH_KEYWORDS = {
     "NVTS": "Navitas NVTS 納微",
     "2313.TW": "華通",
     "2330.TW": "台積電",
+    "2408.TW": "南亞科",
     "3037.TW": "欣興",
     "3491.TWO": "昇達科",
     "8027.TWO": "鈦昇",
@@ -276,6 +327,7 @@ SEARCH_KEYWORDS = {
 FALLBACK_FINANCIALS = {
     "2313.TW": {"rev_growth": 18.5, "gm": 19.8, "om": 11.2, "nm": 8.9, "roe": 14.5, "cr": 1.85, "qr": 1.35, "de": 42.0, "target": "低軌衛星主力", "f_pe": 16.5},
     "2330.TW": {"rev_growth": 36.5, "gm": 57.8, "om": 47.5, "nm": 42.1, "roe": 31.8, "cr": 2.45, "qr": 2.15, "de": 21.0, "target": 1500.0, "f_pe": 22.5},
+    "2408.TW": {"rev_growth": 28.4, "gm": 15.2, "om": 4.5, "nm": 3.8, "roe": 4.2, "cr": 2.90, "qr": 2.10, "de": 18.5, "target": "DRAM復甦觀察", "f_pe": 26.0},
     "3037.TW": {"rev_growth": 24.45, "gm": 17.96, "om": 8.5, "nm": 6.8, "roe": 9.2, "cr": 1.75, "qr": 1.40, "de": 45.0, "target": 965.0, "f_pe": 28.0},
     "AMD":  {"rev_growth": 28.0, "gm": 53.5, "om": 21.0, "nm": 16.5, "roe": 12.4, "cr": 2.50, "qr": 1.90, "de": 4.5, "target": 220.0, "f_pe": 29.5},
     "CRDO": {"rev_growth": 68.5, "gm": 68.8, "om": 22.4, "nm": 20.1, "roe": 16.5, "cr": 5.8, "qr": 5.1, "de": 3.2, "target": 215.0, "f_pe": 45.2},
@@ -299,7 +351,6 @@ FALLBACK_FINANCIALS = {
 PORTFOLIO_FILE = "portfolio_saved.csv"
 WATCHLIST_FILE = "watchlist_saved.json"
 
-# 載入自選股並自動修正任何純中文或舊格式項目
 if "watchlist" not in st.session_state:
     if os.path.exists(WATCHLIST_FILE):
         try:
@@ -309,7 +360,7 @@ if "watchlist" not in st.session_state:
             for k, v in saved_wl.items():
                 if k in DEFAULT_STOCKS:
                     upgraded_wl[k] = DEFAULT_STOCKS[k]
-                elif any("\u4e00" <= ch <= "\u9fff" for ch in k) or "美股自選標的" in v or "電子工業" in v:
+                elif any("\u4e00" <= ch <= "\u9fff" for ch in k) or "美股自選標的" in v or "電子工業" in v or "半導體業" in v:
                     new_k, new_v = auto_format_stock_entry(k)
                     if new_k:
                         upgraded_wl[new_k] = new_v
@@ -330,7 +381,6 @@ def save_watchlist():
     except Exception:
         pass
 
-# 預設持倉 (已依照代號 A->Z 排序，並更新您截圖中的最新股數與成本)
 DEFAULT_PF = [
     {"代號": "ASTS", "持股數": 140.0, "平均成本": 60.05, "前日收盤價": 0.0, "防守埋伏價(GTC)": 40.0},
     {"代號": "BE",   "持股數": 11.0,  "平均成本": 245.91, "前日收盤價": 0.0, "防守埋伏價(GTC)": 220.0},
@@ -492,7 +542,7 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與排序後的下拉選單 (修正第 3 點：先 A-Z 再數字排序) ---
+# --- 主畫面標題與排序後的下拉選單 ---
 st.title("📊 台美股戰略追蹤儀表板")
 
 if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
@@ -512,11 +562,15 @@ selected_ticker = st.selectbox(
 )
 st.session_state.selected_ticker_key = selected_ticker
 
-# --- 側邊欄：新增 / 刪除自選股 (修正第 2 點：支援輸入中文股名或代號) ---
+# --- 側邊欄：修正第 3 點，使用動態計數器 key 確保新增股票後 100% 自動清空輸入欄 ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
+if "input_reset_counter" not in st.session_state:
+    st.session_state.input_reset_counter = 0
+
 raw_input = st.sidebar.text_input(
     "輸入「代號」或「中文股名」皆可自動配對",
-    placeholder="例: 華通 或 2313 或 AMD"
+    placeholder="例: 華通 或 2313 或 AMD",
+    key=f"stock_input_{st.session_state.input_reset_counter}"
 )
 
 if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
@@ -524,6 +578,7 @@ if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
         code_clean, formatted_label = auto_format_stock_entry(raw_input)
         st.session_state.watchlist[code_clean] = formatted_label
         st.session_state.selected_ticker_key = code_clean
+        st.session_state.input_reset_counter += 1  # 自動切換全新空白輸入欄
         save_watchlist()
         st.session_state.flash_success_msg = f"✅ 已成功新增：{formatted_label}"
         st.rerun()
@@ -549,10 +604,9 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # ==========================================
-# 分頁 1：總覽與部位管理 (修正第 4、5 點：加入前日收盤價、依 A-Z 排序、釘選代號欄)
+# 分頁 1：總覽與部位管理
 # ==========================================
 with tab1:
-    # 先同步所有自選股與持股的最新收盤價
     latest_close_map = {}
     summary_rows = []
     with st.spinner("正在同步台美股最新報價與均線位階..."):
@@ -586,7 +640,6 @@ with tab1:
     st.subheader("💼 個人持倉成本與 GTC 守株待兔防守座標")
     st.caption("💡 已自動依代號 **A 到 Z** 排序並填入 **前日收盤價**（最左側「代號」已凍結固定，往右滑動也不會消失）：")
 
-    # 自動更新持倉表內的「前日收盤價」並依 A-Z 排序
     pf_current = sort_portfolio_df(st.session_state.portfolio_df)
     if "前日收盤價" not in pf_current.columns:
         pf_current.insert(3, "前日收盤價", 0.0)
@@ -635,7 +688,7 @@ with tab1:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 # ==========================================
-# 分頁 2：技術線型 (修正第 6 點：左右滑動時自動縮放 Y 軸高低點，K 線永遠不超出畫面)
+# 分頁 2：技術線型 (修正第 2 點：將圖表與動態 Y 軸縮放引擎封裝於同一 HTML 視窗，滑動 100% 自動縮放高低點)
 # ==========================================
 with tab2:
     st.subheader(f"📈 {st.session_state.watchlist.get(selected_ticker)}")
@@ -789,7 +842,7 @@ with tab2:
         y_max = float(recent_slice[price_cols].max().max()) * 1.04
 
         fig.update_layout(
-            height=600,
+            height=590,
             showlegend=False,
             dragmode="pan",
             xaxis_rangeslider_visible=False,
@@ -797,12 +850,102 @@ with tab2:
             paper_bgcolor="#0B0F19",
             plot_bgcolor="#0B0F19",
             font=dict(color="#FFFFFF", size=11),
-            margin=dict(l=5, r=48, t=12, b=15)
+            margin=dict(l=5, r=48, t=12, b=22)
         )
         fig.update_xaxes(type="category", range=[start_idx - 0.5, end_idx + 0.5], nticks=8, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"))
         fig.update_yaxes(side="right", range=[y_min, y_max], fixedrange=True, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"), row=1, col=1)
 
-        st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displayModeBar": True})
+        # 預先計算每一根 K 棒（包含開啟的均線）的最低與最高值陣列，直接傳入同一視窗的 Plotly 縮放引擎
+        row_min_list = [round(float(v), 4) if pd.notna(v) else None for v in df_k[price_cols].min(axis=1)]
+        row_max_list = [round(float(v), 4) if pd.notna(v) else None for v in df_k[price_cols].max(axis=1)]
+
+        plot_html = fig.to_html(
+            include_plotlyjs="cdn",
+            full_html=False,
+            div_id="kline_plot",
+            config={"scrollZoom": False, "displayModeBar": True, "responsive": True}
+        )
+
+        custom_chart_html = f"""
+        <div style="background-color:#0B0F19; margin:0; padding:0; overflow:hidden;">
+            {plot_html}
+        </div>
+        <script>
+        (function() {{
+            const ROW_MIN = {json.dumps(row_min_list)};
+            const ROW_MAX = {json.dumps(row_max_list)};
+            const TOTAL_BARS = ROW_MIN.length;
+
+            function bindAutoYScale() {{
+                const gd = document.getElementById("kline_plot");
+                if (!gd || !gd._fullLayout || typeof gd.on !== "function" || typeof Plotly === "undefined") {{
+                    setTimeout(bindAutoYScale, 50);
+                    return;
+                }}
+                if (gd._yScaleBound) return;
+                gd._yScaleBound = true;
+
+                let isRelayouting = false;
+                let touchDebounce = null;
+
+                function adjustYRange() {{
+                    if (isRelayouting || !gd._fullLayout || !gd._fullLayout.xaxis) return;
+                    const xr = gd._fullLayout.xaxis.range;
+                    if (!xr || xr.length < 2) return;
+
+                    let r0 = Number(xr[0]);
+                    let r1 = Number(xr[1]);
+                    if (isNaN(r0) || isNaN(r1)) return;
+
+                    let i0 = Math.max(0, Math.floor(Math.min(r0, r1)));
+                    let i1 = Math.min(TOTAL_BARS - 1, Math.ceil(Math.max(r0, r1)));
+                    if (i1 < i0) return;
+
+                    let minP = Infinity;
+                    let maxP = -Infinity;
+                    for (let i = i0; i <= i1; i++) {{
+                        const lo = ROW_MIN[i];
+                        const hi = ROW_MAX[i];
+                        if (lo !== null && lo < minP) minP = lo;
+                        if (hi !== null && hi > maxP) maxP = hi;
+                    }}
+
+                    if (minP < Infinity && maxP > -Infinity && maxP >= minP) {{
+                        const span = Math.max(maxP - minP, minP * 0.02);
+                        const pad = span * 0.06;
+                        const newMin = minP - pad;
+                        const newMax = maxP + pad;
+
+                        const curYr = gd._fullLayout.yaxis && gd._fullLayout.yaxis.range;
+                        if (!curYr || Math.abs(curYr[0] - newMin) > 0.05 || Math.abs(curYr[1] - newMax) > 0.05) {{
+                            isRelayouting = true;
+                            Plotly.relayout(gd, {{"yaxis.range": [newMin, newMax]}}).then(function() {{
+                                isRelayouting = false;
+                            }}).catch(function() {{
+                                isRelayouting = false;
+                            }});
+                        }}
+                    }}
+                }}
+
+                gd.on("plotly_relayout", adjustYRange);
+
+                gd.addEventListener("touchmove", function() {{
+                    if (touchDebounce) clearTimeout(touchDebounce);
+                    touchDebounce = setTimeout(adjustYRange, 70);
+                }}, {{passive: true}});
+
+                gd.addEventListener("touchend", function() {{
+                    setTimeout(adjustYRange, 40);
+                    setTimeout(adjustYRange, 150);
+                }}, {{passive: true}});
+            }}
+
+            bindAutoYScale();
+        }})();
+        </script>
+        """
+        components.html(custom_chart_html, height=605, scrolling=False)
     else:
         st.warning("暫時無法載入線圖資料，請確認網路連線或股票代號。")
 
@@ -913,128 +1056,3 @@ with tab5:
                 st.markdown(f"- **{tag}** `{dn['pubDate']}` | [{dn['title']}]({dn['link']})")
         else:
             st.info("今日暫無最新新聞。")
-
-# --- 核心引擎：1. 徹底攔截下拉選單喚醒手機鍵盤  2. K線左右滑動時自動縮放 Y 軸高低點 ---
-components.html(
-    """
-    <script>
-    (function() {
-        const parentWin = window.parent;
-        const parentDoc = parentWin.document;
-
-        // 1. 徹底攔截 BaseWeb Select 的 focus() 呼叫，防止 Android 彈出虛擬鍵盤
-        if (!parentWin._selectFocusPatched) {
-            const origFocus = parentWin.HTMLElement.prototype.focus;
-            parentWin.HTMLElement.prototype.focus = function() {
-                try {
-                    if (this && this.tagName === 'INPUT' && this.closest && this.closest('div[data-baseweb="select"]')) {
-                        this.setAttribute('inputmode', 'none');
-                        this.setAttribute('readonly', 'readonly');
-                        this.blur();
-                        return;
-                    }
-                } catch (e) {}
-                return origFocus.apply(this, arguments);
-            };
-            parentWin._selectFocusPatched = true;
-        }
-
-        function lockSelectInputs() {
-            try {
-                const inputs = parentDoc.querySelectorAll('div[data-baseweb="select"] input');
-                inputs.forEach(inp => {
-                    inp.setAttribute('inputmode', 'none');
-                    inp.setAttribute('readonly', 'readonly');
-                    inp.setAttribute('tabindex', '-1');
-                    if (parentDoc.activeElement === inp) {
-                        inp.blur();
-                    }
-                });
-            } catch (e) {}
-        }
-
-        // 2. K線圖左右平移時，自動計算當前可見範圍的最高/最低價並動態縮放 Y 軸
-        function attachPlotlyAutoScaleY() {
-            try {
-                const plots = parentDoc.querySelectorAll('.js-plotly-plot');
-                plots.forEach(gd => {
-                    if (gd._autoScaleAttached || !gd._fullLayout) return;
-                    gd._autoScaleAttached = true;
-
-                    function rescaleVisibleY() {
-                        if (gd._isScalingY || !gd._fullLayout || !gd._fullLayout.xaxis) return;
-                        const xr = gd._fullLayout.xaxis.range;
-                        if (!xr || xr.length < 2) return;
-
-                        const traces = gd.data || [];
-                        if (!traces.length || !traces[0].x) return;
-                        const totalLen = traces[0].x.length;
-                        const i0 = Math.max(0, Math.floor(Number(xr[0])));
-                        const i1 = Math.min(totalLen - 1, Math.ceil(Number(xr[1])));
-                        if (i1 < i0) return;
-
-                        let minP = Infinity;
-                        let maxP = -Infinity;
-
-                        traces.forEach(tr => {
-                            const ya = tr.yaxis || 'y';
-                            if (ya !== 'y') return;
-                            if (tr.type === 'candlestick') {
-                                for (let i = i0; i <= i1; i++) {
-                                    const lo = Number(tr.low[i]);
-                                    const hi = Number(tr.high[i]);
-                                    if (!isNaN(lo) && lo < minP) minP = lo;
-                                    if (!isNaN(hi) && hi > maxP) maxP = hi;
-                                }
-                            } else if (tr.type === 'scatter' && tr.y) {
-                                for (let i = i0; i <= i1; i++) {
-                                    const v = Number(tr.y[i]);
-                                    if (!isNaN(v) && v > 0) {
-                                        if (v < minP) minP = v;
-                                        if (v > maxP) maxP = v;
-                                    }
-                                }
-                            }
-                        });
-
-                        if (minP < Infinity && maxP > -Infinity && maxP >= minP) {
-                            const pad = Math.max((maxP - minP) * 0.06, minP * 0.02);
-                            const newMin = minP - pad;
-                            const newMax = maxP + pad;
-                            const curYr = gd._fullLayout.yaxis && gd._fullLayout.yaxis.range;
-                            if (!curYr || Math.abs(curYr[0] - newMin) > 0.01 || Math.abs(curYr[1] - newMax) > 0.01) {
-                                gd._isScalingY = true;
-                                parentWin.Plotly.relayout(gd, {'yaxis.range': [newMin, newMax]}).then(() => {
-                                    gd._isScalingY = false;
-                                }).catch(() => {
-                                    gd._isScalingY = false;
-                                });
-                            }
-                        }
-                    }
-
-                    if (typeof gd.on === 'function') {
-                        gd.on('plotly_relayout', rescaleVisibleY);
-                    }
-                    gd.addEventListener('touchmove', function() {
-                        if (gd._touchTimer) clearTimeout(gd._touchTimer);
-                        gd._touchTimer = setTimeout(rescaleVisibleY, 60);
-                    }, {passive: true});
-                    gd.addEventListener('touchend', function() {
-                        setTimeout(rescaleVisibleY, 80);
-                    }, {passive: true});
-                });
-            } catch (e) {}
-        }
-
-        lockSelectInputs();
-        attachPlotlyAutoScaleY();
-        setInterval(() => {
-            lockSelectInputs();
-            attachPlotlyAutoScaleY();
-        }, 250);
-    })();
-    </script>
-    """,
-    height=1,
-)
