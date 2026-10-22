@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
@@ -9,12 +10,62 @@ from plotly.subplots import make_subplots
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
-import re
 
 # --- 網頁與手機版面設定 ---
 st.set_page_config(page_title="台美股戰略追蹤 App", page_icon="📱", layout="wide")
 
-# --- 預設股票清單 (已直接加入 2330 台積電，共 17 檔) ---
+# --- 修正第 1 點：全域隱藏 "Press Enter to submit form" 小字 ---
+st.markdown(
+    """
+    <style>
+    div[data-testid="InputInstructions"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    div[data-baseweb="select"] input {
+        caret-color: transparent !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- 修正第 2 點：在網頁最頂端立即載入「防彈出手機鍵盤鎖」，每 0.2 秒自動鎖定所有下拉選單 ---
+components.html(
+    """
+    <script>
+    function lockAllSelectInputs() {
+        try {
+            const parentDoc = window.parent.document;
+            const selectInputs = parentDoc.querySelectorAll('div[data-baseweb="select"] input');
+            selectInputs.forEach(input => {
+                if (input.getAttribute('inputmode') !== 'none') {
+                    input.setAttribute('inputmode', 'none');
+                }
+                if (!input.hasAttribute('readonly')) {
+                    input.setAttribute('readonly', 'readonly');
+                }
+            });
+        } catch (e) {}
+    }
+    lockAllSelectInputs();
+    setInterval(lockAllSelectInputs, 200);
+    try {
+        window.parent.document.addEventListener('touchstart', lockAllSelectInputs, {passive: true, capture: true});
+        window.parent.document.addEventListener('mousedown', lockAllSelectInputs, {passive: true, capture: true});
+        window.parent.document.addEventListener('focusin', function(e) {
+            if (e.target && e.target.closest && e.target.closest('div[data-baseweb="select"]')) {
+                e.target.setAttribute('inputmode', 'none');
+                e.target.setAttribute('readonly', 'readonly');
+            }
+        }, true);
+    } catch (e) {}
+    </script>
+    """,
+    height=0,
+)
+
+# --- 預設股票清單 (標準模板格式) ---
 DEFAULT_STOCKS = {
     "ASTS": "ASTS (低軌衛星直連 D2D)",
     "BE": "BE (Bloom Energy 燃料電池)",
@@ -34,6 +85,124 @@ DEFAULT_STOCKS = {
     "3714.TW": "3714 富采 (Micro LED/CPO光源)",
     "6127.TWO": "6127 九豪 (氧化鋁陶瓷基板)"
 }
+
+# --- 修正第 3 點：內建台美股智慧模板庫 (輸入代號自動轉為「代號 名稱 (產業定位)」格式) ---
+KNOWN_STOCK_PROFILES = {
+    "2330": ("2330.TW", "2330 台積電 (先進製程/CoWoS龍頭)"),
+    "2454": ("2454.TW", "2454 聯發科 (IC設計/邊緣AI晶片)"),
+    "2317": ("2317.TW", "2317 鴻海 (AI伺服器機櫃龍頭)"),
+    "2308": ("2308.TW", "2308 台達電 (AI伺服器電源/散熱)"),
+    "3037": ("3037.TW", "3037 欣興 (ABF載板/AI伺服器)"),
+    "8046": ("8046.TW", "8046 南電 (高階ABF/BT載板)"),
+    "3189": ("3189.TW", "3189 景碩 (ABF/BT載板封裝)"),
+    "4977": ("4977.TW", "4977 眾達-KY (CPO光通訊模組)"),
+    "2464": ("2464.TW", "2464 盟立 (先進封裝自動化/機器人)"),
+    "8150": ("8150.TW", "8150 南茂 (記憶體/驅動IC封測)"),
+    "3665": ("3665.TW", "3665 貿聯-KY (AEC高速線材/車用)"),
+    "8996": ("8996.TW", "8996 高力 (燃料電池熱能/液冷散熱)"),
+    "3017": ("3017.TW", "3017 奇鋐 (AI伺服器水冷散熱)"),
+    "3324": ("3324.TWO", "3324 雙鴻 (AI伺服器液冷散熱)"),
+    "6239": ("6239.TW", "6239 力成 (記憶體封測/FOPLP)"),
+    "3481": ("3481.TW", "3481 群創 (FOPLP面板級扇出封裝)"),
+    "2409": ("2409.TW", "2409 友達 (Micro LED/車用座艙)"),
+    "2406": ("2406.TW", "2406 國碩 (太陽能導電銲帶/電廠)"),
+    "6442": ("6442.TW", "6442 光聖 (資料中心光被動元件)"),
+    "3163": ("3163.TWO", "3163 波若威 (CPO光纖套件/WDM)"),
+    "3363": ("3363.TWO", "3363 上詮 (台積電CPO光纖陣列)"),
+    "6515": ("6515.TW", "6515 穎崴 (高階AI晶片測試座)"),
+    "3661": ("3661.TW", "3661 世芯-KY (雲端CSP客製化ASIC)"),
+    "3443": ("3443.TW", "3443 創意 (台積電先進製程ASIC)"),
+    "2382": ("2382.TW", "2382 廣達 (AI伺服器代工龍頭)"),
+    "3231": ("3231.TW", "3231 緯創 (AI GPU基板/伺服器)"),
+    "2303": ("2303.TW", "2303 聯電 (成熟製程晶圓代工)"),
+    "3491": ("3491.TWO", "3491 昇達科 (低軌衛星元件)"),
+    "8027": ("8027.TWO", "8027 鈦昇 (TGV 玻璃基板設備)"),
+    "6271": ("6271.TW", "6271 同欣電 (CIS/高頻模組封測)"),
+    "4540": ("4540.TW", "4540 全球傳動 (機器人滾珠螺桿)"),
+    "4576": ("4576.TW", "4576 大銀微系統 (精密運動控制)"),
+    "3714": ("3714.TW", "3714 富采 (Micro LED/CPO光源)"),
+    "6127": ("6127.TWO", "6127 九豪 (氧化鋁陶瓷基板)"),
+    "RKLB": ("RKLB", "RKLB (Rocket Lab 火箭發射/太空系統)"),
+    "PL": ("PL", "PL (Planet Labs 地球觀測衛星)"),
+    "ONDS": ("ONDS", "ONDS (Ondas 無人機/專網通訊)"),
+    "GEV": ("GEV", "GEV (GE Vernova 電力與電網設備)"),
+    "ALAB": ("ALAB", "ALAB (Astera Labs 高速傳輸晶片)"),
+    "MRVL": ("MRVL", "MRVL (Marvell 光學DSP/客製化晶片)"),
+    "NVDA": ("NVDA", "NVDA (NVIDIA AI算力晶片霸主)"),
+    "TSLA": ("TSLA", "TSLA (特斯拉 電動車/FSD/機器人)"),
+    "AVGO": ("AVGO", "AVGO (博通 AI網路晶片/CPO霸主)"),
+    "AMD": ("AMD", "AMD (超微 AI GPU/伺服器CPU)"),
+    "AAPL": ("AAPL", "AAPL (蘋果 終端生態系巨頭)"),
+    "MSFT": ("MSFT", "MSFT (微軟 雲端CSP/AI軟體巨頭)"),
+    "AMZN": ("AMZN", "AMZN (亞馬遜 AWS雲端/Kuiper衛星)"),
+    "META": ("META", "META (Meta 社群與開源AI巨頭)"),
+    "FORM": ("FORM", "FORM (FormFactor 晶圓探針卡龍頭)"),
+    "QS": ("QS", "QS (QuantumScape 固態電池研發)"),
+    "SATS": ("SATS", "SATS (EchoStar 衛星通訊/SpaceX概念)")
+}
+
+def auto_format_stock_entry(raw_input_str):
+    """將使用者輸入的任何代號自動轉為『3491 昇達科 (低軌衛星元件)』標準模板格式"""
+    text = raw_input_str.strip()
+    match = re.match(r"^([A-Za-z0-9\.]+)\s*(.*)$", text)
+    code_raw = match.group(1).upper() if match else text.upper()
+    user_note = match.group(2).strip() if match else ""
+
+    base_code = code_raw.replace(".TW", "").replace(".TWO", "")
+
+    # 1. 若使用者有自己打名稱與括號備註，或落在內建智慧庫中
+    if base_code in KNOWN_STOCK_PROFILES:
+        full_ticker, preset_label = KNOWN_STOCK_PROFILES[base_code]
+        if user_note and "(" in user_note:
+            return full_ticker, f"{base_code} {user_note}" if base_code.isdigit() else f"{base_code} {user_note}"
+        return full_ticker, preset_label
+
+    # 2. 若為台股 4 碼代號：自動向 FinMind 台股官方名冊查詢「中文股名」與「產業分類」
+    if base_code.isdigit():
+        stock_name = ""
+        industry = "台股個股"
+        market_suffix = ".TW"
+        try:
+            url = "https://api.finmindtrade.com/api/v4/data"
+            resp = requests.get(url, params={"dataset": "TaiwanStockInfo", "data_id": base_code}, timeout=5)
+            data = resp.json().get("data", [])
+            if data:
+                stock_name = data[0].get("stock_name", "")
+                industry = data[0].get("industry_category", "台股核心標的")
+                m_type = data[0].get("type", "twse")
+                market_suffix = ".TWO" if m_type == "tpex" else ".TW"
+        except Exception:
+            pass
+
+        full_ticker = code_raw if (code_raw.endswith(".TW") or code_raw.endswith(".TWO")) else f"{base_code}{market_suffix}"
+        if user_note:
+            # 若使用者輸入 "2330 台積電" 則自動補上產業括號
+            if stock_name and stock_name == user_note:
+                return full_ticker, f"{base_code} {stock_name} ({industry})"
+            elif "(" in user_note or "（" in user_note:
+                return full_ticker, f"{base_code} {user_note}"
+            else:
+                return full_ticker, f"{base_code} {user_note} ({industry})"
+        else:
+            if stock_name:
+                return full_ticker, f"{base_code} {stock_name} ({industry})"
+            return full_ticker, f"{base_code} ({industry})"
+
+    # 3. 若為美股代號：自動查詢公司名稱與產業板塊
+    full_ticker = code_raw
+    if user_note:
+        if "(" in user_note or "（" in user_note:
+            return full_ticker, f"{full_ticker} {user_note}"
+        return full_ticker, f"{full_ticker} ({user_note})"
+    try:
+        info = yf.Ticker(full_ticker).info or {}
+        short_name = info.get("shortName", "").split(",")[0].split(" Inc")[0].strip()
+        sector = info.get("industry") or info.get("sector") or "美股標的"
+        if short_name:
+            return full_ticker, f"{full_ticker} ({short_name} / {sector})"
+    except Exception:
+        pass
+    return full_ticker, f"{full_ticker} (美股自選標的)"
 
 SEARCH_KEYWORDS = {
     "ASTS": "AST SpaceMobile OR ASTS",
@@ -78,16 +247,24 @@ FALLBACK_FINANCIALS = {
 PORTFOLIO_FILE = "portfolio_saved.csv"
 WATCHLIST_FILE = "watchlist_saved.json"
 
-# 載入與儲存自選股清單 (確保新增/刪除股票能永久保存)
+# 載入自選股並自動將舊格式升級為「3491 昇達科 (低軌衛星元件)」標準模板格式
 if "watchlist" not in st.session_state:
     if os.path.exists(WATCHLIST_FILE):
         try:
             with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
                 saved_wl = json.load(f)
-            # 確保 2330.TW 也自動補進既有清單中
-            if "2330.TW" not in saved_wl:
-                saved_wl["2330.TW"] = DEFAULT_STOCKS["2330.TW"]
-            st.session_state.watchlist = saved_wl
+            upgraded_wl = {}
+            for k, v in saved_wl.items():
+                if k in DEFAULT_STOCKS:
+                    upgraded_wl[k] = DEFAULT_STOCKS[k]
+                elif "(" not in v:
+                    new_k, new_v = auto_format_stock_entry(v)
+                    upgraded_wl[new_k] = new_v
+                else:
+                    upgraded_wl[k] = v
+            if "2330.TW" not in upgraded_wl:
+                upgraded_wl["2330.TW"] = DEFAULT_STOCKS["2330.TW"]
+            st.session_state.watchlist = upgraded_wl
         except Exception:
             st.session_state.watchlist = DEFAULT_STOCKS.copy()
     else:
@@ -100,7 +277,6 @@ def save_watchlist():
     except Exception:
         pass
 
-# 初始化個人持倉紀錄
 DEFAULT_PF = [
     {"代號": "GOOG", "持股數": 157.0, "平均成本": 0.0, "防守埋伏價(GTC)": 310.0},
     {"代號": "ON", "持股數": 130.0, "平均成本": 76.12, "防守埋伏價(GTC)": 68.0},
@@ -259,8 +435,14 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與「不跳出手機鍵盤」的下拉選單 ---
+# --- 主畫面標題與下拉選單 ---
 st.title("📊 台美股戰略追蹤儀表板")
+
+# 修正第 4 點：跨重整保留並顯示亮綠色的「✅ 已成功新增」提示框
+if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
+    st.success(st.session_state.flash_success_msg)
+    st.sidebar.success(st.session_state.flash_success_msg)
+    st.session_state.flash_success_msg = ""
 
 ticker_options = list(st.session_state.watchlist.keys())
 if "selected_ticker_key" not in st.session_state or st.session_state.selected_ticker_key not in ticker_options:
@@ -274,48 +456,30 @@ selected_ticker = st.selectbox(
 )
 st.session_state.selected_ticker_key = selected_ticker
 
-# --- 側邊欄：修正第 1 點，改為「單一智慧輸入格＋Form表單送出」，怎麼打都能成功新增！ ---
+# --- 側邊欄：新增 / 刪除自選股 ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
-with st.sidebar.form("add_stock_form", clear_on_submit=True):
-    raw_input = st.text_input(
-        "輸入代號與名稱 (同一格輸入即可)",
-        placeholder="例: 2330 台積電 或 RKLB"
-    )
-    add_submitted = st.form_submit_button("➕ 確認新增股票", use_container_width=True)
-    if add_submitted:
-        if raw_input.strip():
-            text = raw_input.strip()
-            # 智慧拆解代號與中文名稱 (例如輸入 "2330 台積電" 或 "2330台積電" 或 "RKLB")
-            match = re.match(r"^([A-Za-z0-9\.]+)\s*(.*)$", text)
-            if match:
-                code_part = match.group(1).upper()
-                name_part = match.group(2).strip()
-            else:
-                code_part = text.upper()
-                name_part = ""
+raw_input = st.sidebar.text_input(
+    "輸入代號即可自動帶出名稱與產業",
+    placeholder="例: 2330 或 3037 或 RKLB"
+)
 
-            if code_part.isdigit():
-                num_code = code_part
-                code_clean = f"{num_code}.TW"
-                label = f"{num_code} {name_part}" if name_part else f"{num_code}.TW"
-            else:
-                code_clean = code_part
-                label = f"{code_clean} ({name_part})" if name_part else code_clean
-
-            st.session_state.watchlist[code_clean] = label
-            st.session_state.selected_ticker_key = code_clean
-            save_watchlist()
-            st.success(f"✅ 已成功新增：{label}")
-            st.rerun()
-        else:
-            st.warning("⚠️ 請先在上方框框輸入股票代號喔！")
+if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
+    if raw_input.strip():
+        code_clean, formatted_label = auto_format_stock_entry(raw_input)
+        st.session_state.watchlist[code_clean] = formatted_label
+        st.session_state.selected_ticker_key = code_clean
+        save_watchlist()
+        st.session_state.flash_success_msg = f"✅ 已成功新增：{formatted_label}"
+        st.rerun()
+    else:
+        st.sidebar.warning("⚠️ 請先在上方框框輸入股票代號喔！")
 
 if st.sidebar.button("➖ 刪除目前檢視的股票", use_container_width=True):
     if len(st.session_state.watchlist) > 1:
         removed_name = st.session_state.watchlist.pop(selected_ticker, selected_ticker)
         st.session_state.selected_ticker_key = list(st.session_state.watchlist.keys())[0]
         save_watchlist()
-        st.sidebar.info(f"已刪除：{removed_name}")
+        st.session_state.flash_success_msg = f"🗑️ 已從清單移除：{removed_name}"
         st.rerun()
 
 # 建立五大核心功能分頁
@@ -381,7 +545,7 @@ with tab1:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 # ==========================================
-# 分頁 2：技術線型 (修正第 3、4 點：預設載入 6 條均線，且清楚顯示每條均線的最新均價)
+# 分頁 2：技術線型 (修正第 5、6 點：修復 K 線顯示、移除下方重複圖例、只保留上方彩色看板)
 # ==========================================
 with tab2:
     st.subheader(f"📈 {st.session_state.watchlist.get(selected_ticker)}")
@@ -404,23 +568,25 @@ with tab2:
         default=["成交量 (Volume)", "KD 指標"]
     )
 
-    # 抓取 2 年日 K 資料，確保 240MA (年線) 隨時都有完整數值
+    # 先抓取足夠長度計算 240MA，再擷取無重複日期的區間繪圖，徹底解決跨年日期重疊導致 K 線消失的問題
     if "日K線" in tf_choice:
-        df_k = fetch_stock_history(selected_ticker, period="2y", interval="1d")
+        df_raw = fetch_stock_history(selected_ticker, period="2y", interval="1d")
         date_fmt = "%m/%d"
-        default_bars = 43
+        plot_tail_bars = 200  # 保留近 200 個交易日(約10個月)供左右滑動，確保 %m/%d 絕對不重複
+        default_bars = 43     # 預設畫面放大顯示最近 2 個月(約43根K棒)
     elif "週K線" in tf_choice:
-        df_k = fetch_stock_history(selected_ticker, period="5y", interval="1wk")
+        df_raw = fetch_stock_history(selected_ticker, period="5y", interval="1wk")
         date_fmt = "%y/%m/%d"
+        plot_tail_bars = 150
         default_bars = 35
     else:
-        df_k = fetch_stock_history(selected_ticker, period="2mo", interval="60m")
+        df_raw = fetch_stock_history(selected_ticker, period="2mo", interval="60m")
         date_fmt = "%m/%d %H:%M"
+        plot_tail_bars = 180
         default_bars = 50
 
-    if not df_k.empty:
-        df_k = df_k.copy()
-        df_k["DateLabel"] = df_k.index.strftime(date_fmt)
+    if not df_raw.empty:
+        df_calc = df_raw.copy()
 
         ma_map = {"5MA": 5, "10MA": 10, "20MA": 20, "60MA": 60, "120MA": 120, "240MA": 240}
         ma_colors = {
@@ -432,16 +598,41 @@ with tab2:
             "240MA": "#F472B6"    # 亮粉紅
         }
 
-        # 計算所有均線與最新一日均價
+        # 1. 在完整歷史資料上計算所有均線與指標 (確保 240MA 年線數值 100% 準確)
         latest_ma_prices = {}
         for m_label in ALL_MA_OPTIONS:
             win = ma_map[m_label]
-            df_k[m_label] = df_k["Close"].rolling(window=win).mean()
-            val = df_k[m_label].iloc[-1]
+            df_calc[m_label] = df_calc["Close"].rolling(window=win).mean()
+            val = df_calc[m_label].iloc[-1]
             latest_ma_prices[m_label] = f"{val:.2f}" if pd.notna(val) else "計算中"
 
-        # 在圖表正上方建立高對比「彩色均線價格看板」(如同專業看盤軟體)
-        ma_badges_html = []
+        low_min = df_calc["Low"].rolling(9).min()
+        high_max = df_calc["High"].rolling(9).max()
+        rsv = (df_calc["Close"] - low_min) / (high_max - low_min) * 100
+        df_calc["K"] = rsv.ewm(com=2, adjust=False).mean()
+        df_calc["D"] = df_calc["K"].ewm(com=2, adjust=False).mean()
+
+        ema12 = df_calc["Close"].ewm(span=12, adjust=False).mean()
+        ema26 = df_calc["Close"].ewm(span=26, adjust=False).mean()
+        df_calc["DIF"] = ema12 - ema26
+        df_calc["MACD"] = df_calc["DIF"].ewm(span=9, adjust=False).mean()
+        df_calc["OSC"] = df_calc["DIF"] - df_calc["MACD"]
+
+        # 2. 擷取繪圖區間並產生唯一日期標籤
+        df_k = df_calc.tail(plot_tail_bars).copy()
+        df_k["DateLabel"] = df_k.index.strftime(date_fmt)
+        if df_k["DateLabel"].duplicated().any():
+            df_k["DateLabel"] = df_k.index.strftime("%y/%m/%d")
+
+        latest_close = df_k["Close"].iloc[-1]
+        k_now = df_k["K"].iloc[-1]
+        d_now = df_k["D"].iloc[-1]
+
+        # 3. 繪製上方「唯一彩色均線看板」(您藍筆圈起來保留的區塊)
+        ma_badges_html = [
+            f"<span style='color:#FFFFFF; font-weight:700; margin-right:14px; font-size:14px; display:inline-block;'>"
+            f"📌 收盤: {latest_close:.2f}</span>"
+        ]
         for m_label in ma_selected:
             color = ma_colors[m_label]
             price_str = latest_ma_prices[m_label]
@@ -449,47 +640,37 @@ with tab2:
                 f"<span style='color:{color}; font-weight:700; margin-right:12px; font-size:14px; display:inline-block;'>"
                 f"● {m_label}: {price_str}</span>"
             )
-        if ma_badges_html:
-            st.markdown(
-                f"<div style='background-color:#0B0F19; padding:10px 14px; border-radius:8px; border:1px solid #334155; margin-bottom:6px;'>"
-                f"<div style='color:#94A3B8; font-size:12px; margin-bottom:4px;'>📌 最新均線價格（對應下方線圖顏色）：</div>"
-                f"{''.join(ma_badges_html)}</div>",
-                unsafe_allow_html=True
+        if "KD 指標" in sub_indicators:
+            ma_badges_html.append(
+                f"<span style='color:#FACC15; font-weight:600; margin-right:10px; font-size:13px; display:inline-block;'>"
+                f"K9: {k_now:.1f}</span>"
+                f"<span style='color:#38BDF8; font-weight:600; margin-right:10px; font-size:13px; display:inline-block;'>"
+                f"D9: {d_now:.1f}</span>"
             )
 
-        # 計算 KD
-        low_min = df_k["Low"].rolling(9).min()
-        high_max = df_k["High"].rolling(9).max()
-        rsv = (df_k["Close"] - low_min) / (high_max - low_min) * 100
-        df_k["K"] = rsv.ewm(com=2, adjust=False).mean()
-        df_k["D"] = df_k["K"].ewm(com=2, adjust=False).mean()
+        st.markdown(
+            f"<div style='background-color:#0B0F19; padding:10px 14px; border-radius:8px; border:1px solid #334155; margin-bottom:6px;'>"
+            f"{''.join(ma_badges_html)}</div>",
+            unsafe_allow_html=True
+        )
 
-        # 計算 MACD
-        ema12 = df_k["Close"].ewm(span=12, adjust=False).mean()
-        ema26 = df_k["Close"].ewm(span=26, adjust=False).mean()
-        df_k["DIF"] = ema12 - ema26
-        df_k["MACD"] = df_k["DIF"].ewm(span=9, adjust=False).mean()
-        df_k["OSC"] = df_k["DIF"] - df_k["MACD"]
-
+        # 4. 建立 K 線與副圖 (修正第 6 點：showlegend=False 移除下方紅筆圈選的重複圖例)
         num_rows = 1 + len(sub_indicators)
-        row_heights = [0.58] + [0.42 / len(sub_indicators)] * len(sub_indicators) if sub_indicators else [1.0]
+        row_heights = [0.60] + [0.40 / len(sub_indicators)] * len(sub_indicators) if sub_indicators else [1.0]
         fig = make_subplots(rows=num_rows, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=row_heights)
 
-        latest_close = df_k["Close"].iloc[-1]
         fig.add_trace(go.Candlestick(
             x=df_k["DateLabel"],
             open=df_k["Open"], high=df_k["High"], low=df_k["Low"], close=df_k["Close"],
             increasing_line_color="#EF4444", decreasing_line_color="#10B981",
             increasing_fillcolor="#EF4444", decreasing_fillcolor="#10B981",
             increasing_line_width=0.9, decreasing_line_width=0.9,
-            name=f"K線 ({latest_close:.2f})"
+            name="K線"
         ), row=1, col=1)
 
-        # 均線圖例直接顯示「5MA: 價格」，且線條保持極細 (width=1.0)
         for m_label in ma_selected:
-            legend_name = f"{m_label}: {latest_ma_prices[m_label]}"
             fig.add_trace(go.Scatter(
-                x=df_k["DateLabel"], y=df_k[m_label], mode="lines", name=legend_name,
+                x=df_k["DateLabel"], y=df_k[m_label], mode="lines", name=m_label,
                 line=dict(color=ma_colors[m_label], width=1.0)
             ), row=1, col=1)
 
@@ -497,14 +678,12 @@ with tab2:
         if "成交量 (Volume)" in sub_indicators:
             vol_colors = ["#EF4444" if c >= o else "#10B981" for c, o in zip(df_k["Close"], df_k["Open"])]
             fig.add_trace(go.Bar(x=df_k["DateLabel"], y=df_k["Volume"], name="成交量", marker_color=vol_colors), row=curr_row, col=1)
-            fig.update_yaxes(side="right", tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
+            fig.update_yaxes(side="right", fixedrange=True, tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
             curr_row += 1
 
         if "KD 指標" in sub_indicators:
-            k_now = df_k["K"].iloc[-1]
-            d_now = df_k["D"].iloc[-1]
-            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["K"], name=f"K9: {k_now:.1f}", line=dict(color="#FACC15", width=1.0)), row=curr_row, col=1)
-            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["D"], name=f"D9: {d_now:.1f}", line=dict(color="#38BDF8", width=1.0)), row=curr_row, col=1)
+            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["K"], name="K9", line=dict(color="#FACC15", width=1.0)), row=curr_row, col=1)
+            fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["D"], name="D9", line=dict(color="#38BDF8", width=1.0)), row=curr_row, col=1)
             fig.update_yaxes(range=[0, 100], side="right", fixedrange=True, tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
             curr_row += 1
 
@@ -513,38 +692,31 @@ with tab2:
             fig.add_trace(go.Bar(x=df_k["DateLabel"], y=df_k["OSC"], name="MACD柱", marker_color=osc_colors), row=curr_row, col=1)
             fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["DIF"], name="DIF", line=dict(color="#FACC15", width=1.0)), row=curr_row, col=1)
             fig.add_trace(go.Scatter(x=df_k["DateLabel"], y=df_k["MACD"], name="MACD", line=dict(color="#38BDF8", width=1.0)), row=curr_row, col=1)
-            fig.update_yaxes(side="right", tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
+            fig.update_yaxes(side="right", fixedrange=True, tickfont=dict(color="#E2E8F0"), row=curr_row, col=1)
 
         total_len = len(df_k)
         start_idx = max(0, total_len - default_bars)
         end_idx = total_len - 1
 
+        # 計算包含 K 線與各條均線的價格上下界，並鎖定垂直誤滑 (fixedrange=True)
+        price_cols = ["Low", "High"] + [m for m in ma_selected if m in df_k.columns]
         recent_slice = df_k.iloc[start_idx:]
-        y_min = float(recent_slice["Low"].min()) * 0.95
-        y_max = float(recent_slice["High"].max()) * 1.05
+        y_min = float(recent_slice[price_cols].min().min()) * 0.96
+        y_max = float(recent_slice[price_cols].max().max()) * 1.04
 
-        # 強制設定圖例與座標軸文字為高對比亮白色 (#FFFFFF)，徹底解決黑底黑字看不見的問題
         fig.update_layout(
-            height=650,
+            height=600,
+            showlegend=False,  # 修正第 6 點：徹底隱藏圖表內部重複的圖例
             dragmode="pan",
             xaxis_rangeslider_visible=False,
             template="plotly_dark",
             paper_bgcolor="#0B0F19",
             plot_bgcolor="#0B0F19",
             font=dict(color="#FFFFFF", size=11),
-            margin=dict(l=5, r=48, t=55, b=15),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.01,
-                xanchor="left",
-                x=0,
-                bgcolor="rgba(15, 23, 42, 0.85)",
-                font=dict(color="#FFFFFF", size=11)
-            )
+            margin=dict(l=5, r=48, t=12, b=15)
         )
         fig.update_xaxes(type="category", range=[start_idx - 0.5, end_idx + 0.5], nticks=8, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"))
-        fig.update_yaxes(side="right", range=[y_min, y_max], showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"), row=1, col=1)
+        fig.update_yaxes(side="right", range=[y_min, y_max], fixedrange=True, showgrid=True, gridcolor="#1E293B", tickfont=dict(color="#E2E8F0"), row=1, col=1)
 
         st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displayModeBar": True})
     else:
@@ -657,23 +829,3 @@ with tab5:
                 st.markdown(f"- **{tag}** `{dn['pubDate']}` | [{dn['title']}]({dn['link']})")
         else:
             st.info("今日暫無最新新聞。")
-
-# --- 修正第 2 點：強制關閉手機點選下拉選單時自動彈出鍵盤的機制 ---
-components.html(
-    """
-    <script>
-    function disableSelectKeyboard() {
-        const parentDoc = window.parent.document;
-        const selectInputs = parentDoc.querySelectorAll('div[data-baseweb="select"] input');
-        selectInputs.forEach(input => {
-            input.setAttribute('inputmode', 'none');
-            input.setAttribute('readonly', 'readonly');
-        });
-    }
-    disableSelectKeyboard();
-    const observer = new MutationObserver(disableSelectKeyboard);
-    observer.observe(window.parent.document.body, { childList: true, subtree: true });
-    </script>
-    """,
-    height=0,
-)
