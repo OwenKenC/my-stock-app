@@ -12,76 +12,87 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 # --- 網頁與手機版面設定 ---
-st.set_page_config(page_title="台美股戰略追蹤 App Ver. 8", page_icon="📱", layout="wide")
+st.set_page_config(page_title="台美股戰略追蹤 App Ver. 9", page_icon="📱", layout="wide")
 
-# --- 全域 CSS：美化「無鍵盤原生摺疊選單」與隱藏多餘提示字 ---
+# --- 全域 CSS：隱藏輸入框提示字、防止下拉選單觸發手機鍵盤 ---
 st.markdown(
     """
     <style>
-    /* 1. 隱藏文字輸入框右下角的 Press Enter 英文小字 */
     div[data-testid="InputInstructions"] {
         display: none !important;
         visibility: hidden !important;
     }
-
-    /* 2. 將技術線圖下方的 MultiSelect 內部打字框徹底移除，防止誤觸彈出鍵盤 */
-    div[data-testid="stMultiSelect"] input {
-        display: none !important;
-        visibility: hidden !important;
-        width: 0px !important;
-        height: 0px !important;
-        pointer-events: none !important;
-    }
-
-    /* 3. 將原生 Expander 打造成與下拉選單一模一樣的外觀（文字在左、箭頭在右、整條可點、0 input 絕不彈鍵盤） */
-    div[data-testid="stExpander"] {
-        border: 1px solid #CBD5E1 !important;
-        border-radius: 8px !important;
-        background-color: #F8FAFC !important;
-        margin-bottom: 10px !important;
-    }
-    div[data-testid="stExpander"] details summary {
-        padding: 12px 16px !important;
-        font-size: 16px !important;
-        font-weight: 600 !important;
-        color: #0F172A !important;
+    div[data-baseweb="select"],
+    div[data-baseweb="select"] > div {
         cursor: pointer !important;
+    }
+    div[data-baseweb="select"] input {
+        caret-color: transparent !important;
+        pointer-events: none !important;
         user-select: none !important;
         -webkit-user-select: none !important;
-    }
-    div[data-testid="stExpander"] details summary p {
-        font-size: 15px !important;
-        font-weight: 600 !important;
-        margin: 0 !important;
-    }
-    /* 選單展開後的內部滾動容器，避免清單太長佔滿畫面 */
-    div[data-testid="stExpanderDetails"] {
-        max-height: 320px !important;
-        overflow-y: auto !important;
-        padding: 6px 10px 12px 10px !important;
-        background-color: #FFFFFF !important;
-        border-top: 1px solid #E2E8F0 !important;
-    }
-    /* 選單內的每一檔股票選項按鈕靠左對齊、無邊框清爽風格 */
-    div[data-testid="stExpanderDetails"] button {
-        justify-content: flex-start !important;
-        text-align: left !important;
-        border: 1px solid #F1F5F9 !important;
-        background-color: #F8FAFC !important;
-        color: #1E293B !important;
-        padding: 8px 12px !important;
-        margin-bottom: 2px !important;
-        border-radius: 6px !important;
-        font-weight: 500 !important;
-    }
-    div[data-testid="stExpanderDetails"] button:hover,
-    div[data-testid="stExpanderDetails"] button:active {
-        background-color: #E2E8F0 !important;
-        border-color: #94A3B8 !important;
+        width: 1px !important;
+        opacity: 0 !important;
     }
     </style>
     """,
     unsafe_allow_html=True
+)
+
+# --- 防彈鍵盤鎖：封鎖手機鍵盤彈出 ---
+components.html(
+    """
+    <script>
+    (function() {
+        try {
+            const pWin = window.parent;
+            const pDoc = pWin.document;
+
+            function makeSelectReadOnly() {
+                try {
+                    const inputs = pDoc.querySelectorAll('div[data-baseweb="select"] input');
+                    inputs.forEach(inp => {
+                        inp.disabled = false;
+                        inp.removeAttribute('disabled');
+                        inp.style.removeProperty('display');
+                        inp.style.removeProperty('visibility');
+                        inp.readOnly = true;
+                        inp.setAttribute('readonly', 'readonly');
+                        inp.setAttribute('inputmode', 'none');
+                        inp.setAttribute('tabindex', '-1');
+                    });
+                } catch (e) {}
+            }
+
+            if (!pWin._ver9FocusPatched) {
+                const origElemFocus = pWin.HTMLElement.prototype.focus;
+                function patchedFocus() {
+                    try {
+                        if (this && this.tagName === 'INPUT' && this.closest && this.closest('div[data-baseweb="select"]')) {
+                            this.readOnly = true;
+                            this.setAttribute('readonly', 'readonly');
+                            this.setAttribute('inputmode', 'none');
+                            return;
+                        }
+                    } catch (e) {}
+                    return origElemFocus.apply(this, arguments);
+                }
+                pWin.HTMLInputElement.prototype.focus = patchedFocus;
+                pWin.HTMLElement.prototype.focus = patchedFocus;
+                pWin._ver9FocusPatched = true;
+            }
+
+            ['touchstart', 'pointerdown', 'mousedown'].forEach(evtName => {
+                pDoc.addEventListener(evtName, makeSelectReadOnly, {capture: true, passive: true});
+            });
+
+            makeSelectReadOnly();
+            setInterval(makeSelectReadOnly, 150);
+        } catch (err) {}
+    })();
+    </script>
+    """,
+    height=1,
 )
 
 # --- 預設股票清單 (標準模板格式) ---
@@ -96,6 +107,7 @@ DEFAULT_STOCKS = {
     "NOK": "NOK (諾基亞 AI-RAN/光網路)",
     "NVTS": "NVTS (納微 800V GaN/SiC)",
     "ON": "ON (安森美 車用/功率半導體)",
+    "1303.TW": "1303 南亞 (塑化/電子材料)",
     "2313.TW": "2313 華通 (低軌衛星/高階HDI板)",
     "2330.TW": "2330 台積電 (先進製程/CoWoS龍頭)",
     "2408.TW": "2408 南亞科 (DRAM記憶體製造)",
@@ -109,66 +121,30 @@ DEFAULT_STOCKS = {
     "8027.TWO": "8027 鈦昇 (TGV 玻璃基板設備)"
 }
 
-# --- 內建台美股智慧模板庫 ---
+# --- 內建台美股智慧模板庫（加入防呆硬對應，杜絕南亞與南亞科混淆） ---
 KNOWN_STOCK_PROFILES = {
+    "1303": ("1303.TW", "1303 南亞 (塑化/電子材料)"),
+    "南亞": ("1303.TW", "1303 南亞 (塑化/電子材料)"),
     "2313": ("2313.TW", "2313 華通 (低軌衛星/高階HDI板)"),
+    "華通": ("2313.TW", "2313 華通 (低軌衛星/高階HDI板)"),
     "2330": ("2330.TW", "2330 台積電 (先進製程/CoWoS龍頭)"),
+    "台積電": ("2330.TW", "2330 台積電 (先進製程/CoWoS龍頭)"),
     "2408": ("2408.TW", "2408 南亞科 (DRAM記憶體製造)"),
+    "南亞科": ("2408.TW", "2408 南亞科 (DRAM記憶體製造)"),
     "2454": ("2454.TW", "2454 聯發科 (IC設計/邊緣AI晶片)"),
+    "聯發科": ("2454.TW", "2454 聯發科 (IC設計/邊緣AI晶片)"),
     "2317": ("2317.TW", "2317 鴻海 (AI伺服器機櫃龍頭)"),
+    "鴻海": ("2317.TW", "2317 鴻海 (AI伺服器機櫃龍頭)"),
     "2308": ("2308.TW", "2308 台達電 (AI伺服器電源/散熱)"),
+    "台達電": ("2308.TW", "2308 台達電 (AI伺服器電源/散熱)"),
     "3037": ("3037.TW", "3037 欣興 (ABF載板/AI伺服器)"),
-    "8046": ("8046.TW", "8046 南電 (高階ABF/BT載板)"),
-    "3189": ("3189.TW", "3189 景碩 (ABF/BT載板封裝)"),
-    "4977": ("4977.TW", "4977 眾達-KY (CPO光通訊模組)"),
-    "2464": ("2464.TW", "2464 盟立 (先進封裝自動化/機器人)"),
-    "8150": ("8150.TW", "8150 南茂 (記憶體/驅動IC封測)"),
-    "3665": ("3665.TW", "3665 貿聯-KY (AEC高速線材/車用)"),
-    "8996": ("8996.TW", "8996 高力 (燃料電池熱能/液冷散熱)"),
-    "3017": ("3017.TW", "3017 奇鋐 (AI伺服器水冷散熱)"),
-    "3324": ("3324.TWO", "3324 雙鴻 (AI伺服器液冷散熱)"),
-    "6239": ("6239.TW", "6239 力成 (記憶體封測/FOPLP)"),
-    "3481": ("3481.TW", "3481 群創 (FOPLP面板級扇出封裝)"),
-    "2409": ("2409.TW", "2409 友達 (Micro LED/車用座艙)"),
-    "2406": ("2406.TW", "2406 國碩 (太陽能導電銲帶/電廠)"),
-    "6442": ("6442.TW", "6442 光聖 (資料中心光被動元件)"),
-    "3163": ("3163.TWO", "3163 波若威 (CPO光纖套件/WDM)"),
-    "3363": ("3363.TWO", "3363 上詮 (台積電CPO光纖陣列)"),
-    "6515": ("6515.TW", "6515 穎崴 (高階AI晶片測試座)"),
-    "3661": ("3661.TW", "3661 世芯-KY (雲端CSP客製化ASIC)"),
-    "3443": ("3443.TW", "3443 創意 (台積電先進製程ASIC)"),
-    "2382": ("2382.TW", "2382 廣達 (AI伺服器代工龍頭)"),
-    "3231": ("3231.TW", "3231 緯創 (AI GPU基板/伺服器)"),
-    "6669": ("6669.TW", "6669 緯穎 (雲端CSP伺服器龍頭)"),
-    "2303": ("2303.TW", "2303 聯電 (成熟製程晶圓代工)"),
-    "6285": ("6285.TW", "6285 啟碁 (低軌衛星車用網通)"),
-    "2355": ("2355.TW", "2355 敬鵬 (車用/低軌衛星PCB)"),
-    "2367": ("2367.TW", "2367 耀登 (低軌衛星天線模組)"),
+    "欣興": ("3037.TW", "3037 欣興 (ABF載板/AI伺服器)"),
     "3491": ("3491.TWO", "3491 昇達科 (低軌衛星元件)"),
-    "8027": ("8027.TWO", "8027 鈦昇 (TGV 玻璃基板設備)"),
-    "6271": ("6271.TW", "6271 同欣電 (CIS/高頻模組封測)"),
-    "4540": ("4540.TW", "4540 全球傳動 (機器人滾珠螺桿)"),
-    "4576": ("4576.TW", "4576 大銀微系統 (精密運動控制)"),
-    "3714": ("3714.TW", "3714 富采 (Micro LED/CPO光源)"),
-    "6127": ("6127.TWO", "6127 九豪 (氧化鋁陶瓷基板)"),
-    "RKLB": ("RKLB", "RKLB (Rocket Lab 火箭發射/太空系統)"),
-    "PL": ("PL", "PL (Planet Labs 地球觀測衛星)"),
-    "ONDS": ("ONDS", "ONDS (Ondas 無人機/專網通訊)"),
-    "GEV": ("GEV", "GEV (GE Vernova 電力與電網設備)"),
-    "ALAB": ("ALAB", "ALAB (Astera Labs 高速傳輸晶片)"),
-    "MRVL": ("MRVL", "MRVL (Marvell 光學DSP/客製化晶片)"),
+    "昇達科": ("3491.TWO", "3491 昇達科 (低軌衛星元件)"),
+    "AMD": ("AMD", "AMD (超微 AI GPU/伺服器CPU)"),
     "NVDA": ("NVDA", "NVDA (NVIDIA AI算力晶片霸主)"),
     "TSLA": ("TSLA", "TSLA (特斯拉 電動車/FSD/機器人)"),
-    "AVGO": ("AVGO", "AVGO (博通 AI網路晶片/CPO霸主)"),
-    "AMD": ("AMD", "AMD (超微 AI GPU/伺服器CPU)"),
-    "AAPL": ("AAPL", "AAPL (蘋果 終端生態系巨頭)"),
-    "MSFT": ("MSFT", "MSFT (微軟 雲端CSP/AI軟體巨頭)"),
-    "AMZN": ("AMZN", "AMZN (亞馬遜 AWS雲端/Kuiper衛星)"),
-    "META": ("META", "META (Meta 社群與開源AI巨頭)"),
-    "FORM": ("FORM", "FORM (FormFactor 晶圓探針卡龍頭)"),
-    "AEHR": ("AEHR", "AEHR (Aehr 晶圓級老化測試設備)"),
-    "QS": ("QS", "QS (QuantumScape 固態電池研發)"),
-    "SATS": ("SATS", "SATS (EchoStar 衛星通訊/SpaceX概念)")
+    "AVGO": ("AVGO", "AVGO (博通 AI網路晶片/CPO霸主)")
 }
 
 @st.cache_data(ttl=86400)
@@ -191,15 +167,25 @@ def auto_format_stock_entry(raw_input_str):
     if not text:
         return "", ""
 
+    # 防呆第一道：精確比對智慧庫（杜絕南亞與南亞科混淆）
     clean_query = text.replace(".TW", "").replace(".TWO", "").strip()
     if clean_query.upper() in KNOWN_STOCK_PROFILES:
         return KNOWN_STOCK_PROFILES[clean_query.upper()]
+    if clean_query in KNOWN_STOCK_PROFILES:
+        return KNOWN_STOCK_PROFILES[clean_query]
 
-    for code_key, (full_tk, label_str) in KNOWN_STOCK_PROFILES.items():
-        if clean_query in label_str:
-            parts = label_str.split(" ")
-            if len(parts) >= 2 and (clean_query == parts[1] or clean_query in parts[1]):
-                return full_tk, label_str
+    tw_dir = load_tw_stock_directory()
+
+    # 中文名稱或代號對應
+    if not tw_dir.empty:
+        exact_match = tw_dir[(tw_dir["stock_id"] == clean_query) | (tw_dir["stock_name"] == clean_query)]
+        if not exact_match.empty:
+            r = exact_match.iloc[0]
+            sid = r["stock_id"]
+            if sid in KNOWN_STOCK_PROFILES:
+                return KNOWN_STOCK_PROFILES[sid]
+            sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
+            return f"{sid}{sfx}", f"{sid} {r['stock_name']} ({r.get('industry_category', '台股標的')})"
 
     match = re.match(r"^([A-Za-z0-9\.]+)\s*(.*)$", text)
     if match:
@@ -209,52 +195,13 @@ def auto_format_stock_entry(raw_input_str):
         code_raw = ""
         user_note = text
 
-    tw_dir = load_tw_stock_directory()
-
-    if not code_raw or any("\u4e00" <= ch <= "\u9fff" for ch in text):
-        num_match = re.search(r"(\d{4})", text)
-        chinese_only = re.sub(r"[A-Za-z0-9\.\(\)（）\s]+", "", text)
-
-        if num_match:
-            base_code = num_match.group(1)
-            if base_code in KNOWN_STOCK_PROFILES:
-                return KNOWN_STOCK_PROFILES[base_code]
-            if not tw_dir.empty:
-                row = tw_dir[tw_dir["stock_id"] == base_code]
-                if not row.empty:
-                    r = row.iloc[0]
-                    sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
-                    return f"{base_code}{sfx}", f"{base_code} {r['stock_name']} ({r.get('industry_category', '台股標的')})"
-
-        if chinese_only and not tw_dir.empty:
-            exact_row = tw_dir[tw_dir["stock_name"] == chinese_only]
-            if exact_row.empty:
-                exact_row = tw_dir[tw_dir["stock_name"].str.contains(re.escape(chinese_only), na=False)]
-            if not exact_row.empty:
-                r = exact_row.iloc[0]
-                sid = r["stock_id"]
-                if sid in KNOWN_STOCK_PROFILES:
-                    return KNOWN_STOCK_PROFILES[sid]
-                sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
-                ind = r.get("industry_category", "台股核心標的")
-                return f"{sid}{sfx}", f"{sid} {r['stock_name']} ({ind})"
-
     base_code = code_raw.replace(".TW", "").replace(".TWO", "")
-    if base_code.isdigit():
+    if base_code.isdigit() and len(base_code) == 4:
         if base_code in KNOWN_STOCK_PROFILES:
             return KNOWN_STOCK_PROFILES[base_code]
-        if not tw_dir.empty:
-            row = tw_dir[tw_dir["stock_id"] == base_code]
-            if not row.empty:
-                r = row.iloc[0]
-                sfx = ".TWO" if r.get("type") == "tpex" else ".TW"
-                ind = r.get("industry_category", "台股核心標的")
-                return f"{base_code}{sfx}", f"{base_code} {r['stock_name']} ({ind})"
         return f"{base_code}.TW", f"{base_code} {user_note or '台股標的'} (台股自選)"
 
     full_ticker = code_raw if code_raw else text.upper()
-    if full_ticker in KNOWN_STOCK_PROFILES:
-        return KNOWN_STOCK_PROFILES[full_ticker]
     try:
         info = yf.Ticker(full_ticker).info or {}
         short_name = info.get("shortName", "").split(",")[0].split(" Inc")[0].strip()
@@ -295,20 +242,18 @@ SEARCH_KEYWORDS = {
     "ON": "ON Semiconductor 安森美",
     "NOK": "Nokia 諾基亞",
     "NVTS": "Navitas NVTS 納微",
+    "1303.TW": "南亞",
     "2313.TW": "華通",
     "2330.TW": "台積電",
     "2408.TW": "南亞科",
     "3037.TW": "欣興",
     "3491.TWO": "昇達科",
     "8027.TWO": "鈦昇",
-    "6271.TW": "同欣電",
-    "4540.TW": "全球傳動",
-    "4576.TW": "大銀微系統",
-    "3714.TW": "富采",
-    "6127.TWO": "九豪"
+    "6271.TW": "同欣電"
 }
 
 FALLBACK_FINANCIALS = {
+    "1303.TW": {"rev_growth": 5.2, "gm": 12.5, "om": 3.1, "nm": 4.2, "roe": 4.8, "cr": 1.45, "qr": 1.12, "de": 65.0, "target": "塑化/電子材料", "f_pe": 18.5},
     "2313.TW": {"rev_growth": 18.5, "gm": 19.8, "om": 11.2, "nm": 8.9, "roe": 14.5, "cr": 1.85, "qr": 1.35, "de": 42.0, "target": "低軌衛星主力", "f_pe": 16.5},
     "2330.TW": {"rev_growth": 36.5, "gm": 57.8, "om": 47.5, "nm": 42.1, "roe": 31.8, "cr": 2.45, "qr": 2.15, "de": 21.0, "target": 1500.0, "f_pe": 22.5},
     "2408.TW": {"rev_growth": 28.4, "gm": 15.2, "om": 4.5, "nm": 3.8, "roe": 4.2, "cr": 2.90, "qr": 2.10, "de": 18.5, "target": "DRAM復甦觀察", "f_pe": 26.0},
@@ -325,11 +270,7 @@ FALLBACK_FINANCIALS = {
     "BE":   {"rev_growth": 31.0, "gm": 31.5, "om": 8.2, "nm": 4.5, "roe": 14.2, "cr": 2.10, "qr": 1.45, "de": 115.0, "target": 275.0, "f_pe": 32.0},
     "3491.TWO": {"rev_growth": 48.5, "gm": 52.3, "om": 26.8, "nm": 21.5, "roe": 24.6, "cr": 2.85, "qr": 2.10, "de": 22.0, "target": "法人看多", "f_pe": 35.0},
     "8027.TWO": {"rev_growth": 32.4, "gm": 34.5, "om": 6.2, "nm": 4.8, "roe": 8.5, "cr": 2.40, "qr": 1.75, "de": 35.0, "target": "訂單至2027", "f_pe": 42.0},
-    "6271.TW":  {"rev_growth": 12.8, "gm": 28.6, "om": 14.5, "nm": 11.8, "roe": 10.2, "cr": 2.60, "qr": 2.15, "de": 28.5, "target": "穩健獲利", "f_pe": 19.5},
-    "4540.TW":  {"rev_growth": 19.5, "gm": 24.2, "om": 5.8, "nm": 4.1, "roe": 6.5, "cr": 1.95, "qr": 1.20, "de": 48.0, "target": "機器人題材", "f_pe": 38.0},
-    "4576.TW":  {"rev_growth": 26.8, "gm": 35.8, "om": 11.4, "nm": 9.2, "roe": 11.5, "cr": 2.75, "qr": 1.90, "de": 24.0, "target": "半導體設備", "f_pe": 40.0},
-    "3714.TW":  {"rev_growth": 6.5, "gm": 14.8, "om": -1.5, "nm": 0.8, "roe": 1.2, "cr": 2.25, "qr": 1.65, "de": 18.5, "target": "CPO/車用轉型", "f_pe": 45.0},
-    "6127.TWO": {"rev_growth": 15.2, "gm": 26.4, "om": 9.5, "nm": 7.6, "roe": 9.8, "cr": 2.50, "qr": 1.85, "de": 26.0, "target": "陶瓷基板穩健", "f_pe": 25.0}
+    "6271.TW":  {"rev_growth": 12.8, "gm": 28.6, "om": 14.5, "nm": 11.8, "roe": 10.2, "cr": 2.60, "qr": 2.15, "de": 28.5, "target": "穩健獲利", "f_pe": 19.5}
 }
 
 PORTFOLIO_FILE = "portfolio_saved.csv"
@@ -344,12 +285,10 @@ if "watchlist" not in st.session_state:
             for k, v in saved_wl.items():
                 if k in DEFAULT_STOCKS:
                     upgraded_wl[k] = DEFAULT_STOCKS[k]
-                elif any("\u4e00" <= ch <= "\u9fff" for ch in k) or "美股自選標的" in v or "電子工業" in v or "半導體業" in v:
+                else:
                     new_k, new_v = auto_format_stock_entry(k)
                     if new_k:
                         upgraded_wl[new_k] = new_v
-                else:
-                    upgraded_wl[k] = v
             if "2330.TW" not in upgraded_wl:
                 upgraded_wl["2330.TW"] = DEFAULT_STOCKS["2330.TW"]
             st.session_state.watchlist = upgraded_wl
@@ -389,7 +328,6 @@ if "portfolio_df" not in st.session_state:
     else:
         st.session_state.portfolio_df = sort_portfolio_df(pd.DataFrame(DEFAULT_PF))
 
-# --- 資料抓取函數 ---
 @st.cache_data(ttl=1800)
 def fetch_stock_history(ticker, period="2y", interval="1d"):
     try:
@@ -408,7 +346,6 @@ def fetch_comprehensive_financials(ticker):
         "rev_growth": 10.0, "gm": 30.0, "om": 10.0, "nm": 8.0,
         "roe": 10.0, "cr": 2.0, "qr": 1.5, "de": 30.0, "target": "無資料", "f_pe": "無資料"
     }).copy()
-
     inc, bal, inst = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     try:
         stock = yf.Ticker(ticker)
@@ -418,59 +355,8 @@ def fetch_comprehensive_financials(ticker):
         except Exception: pass
         try: inst = stock.institutional_holders
         except Exception: pass
-
-        if not inc.empty:
-            cols = inc.columns
-            rev = inc.loc["Total Revenue", cols[0]] if "Total Revenue" in inc.index else None
-            gp = inc.loc["Gross Profit", cols[0]] if "Gross Profit" in inc.index else None
-            op = inc.loc["Operating Income", cols[0]] if "Operating Income" in inc.index else None
-            ni = inc.loc["Net Income", cols[0]] if "Net Income" in inc.index else None
-
-            if rev and rev != 0:
-                if pd.notna(gp): fb["gm"] = float((gp / rev) * 100)
-                if pd.notna(op): fb["om"] = float((op / rev) * 100)
-                if pd.notna(ni): fb["nm"] = float((ni / rev) * 100)
-                if len(cols) >= 5 and pd.notna(inc.loc["Total Revenue", cols[4]]):
-                    prev_rev = inc.loc["Total Revenue", cols[4]]
-                    if prev_rev and prev_rev != 0:
-                        fb["rev_growth"] = float(((rev - prev_rev) / abs(prev_rev)) * 100)
-                elif len(cols) >= 2 and pd.notna(inc.loc["Total Revenue", cols[1]]):
-                    prev_rev = inc.loc["Total Revenue", cols[1]]
-                    if prev_rev and prev_rev != 0:
-                        fb["rev_growth"] = float(((rev - prev_rev) / abs(prev_rev)) * 100)
-
-        if not bal.empty:
-            b_col = bal.columns[0]
-            ca = bal.loc["Current Assets", b_col] if "Current Assets" in bal.index else None
-            cl = bal.loc["Current Liabilities", b_col] if "Current Liabilities" in bal.index else None
-            inv = bal.loc["Inventory", b_col] if "Inventory" in bal.index else 0
-            debt = bal.loc["Total Debt", b_col] if "Total Debt" in bal.index else None
-            eq = bal.loc["Stockholders Equity", b_col] if "Stockholders Equity" in bal.index else None
-
-            if pd.notna(ca) and pd.notna(cl) and cl != 0:
-                fb["cr"] = float(ca / cl)
-                inv_val = float(inv) if pd.notna(inv) else 0.0
-                fb["qr"] = float((ca - inv_val) / cl)
-            if pd.notna(debt) and pd.notna(eq) and eq != 0:
-                fb["de"] = float((debt / abs(eq)) * 100)
-
-        try:
-            info = stock.info or {}
-            if info.get("grossMargins"): fb["gm"] = info["grossMargins"] * 100
-            if info.get("operatingMargins"): fb["om"] = info["operatingMargins"] * 100
-            if info.get("profitMargins"): fb["nm"] = info["profitMargins"] * 100
-            if info.get("returnOnEquity"): fb["roe"] = info["returnOnEquity"] * 100
-            if info.get("currentRatio"): fb["cr"] = info["currentRatio"]
-            if info.get("quickRatio"): fb["qr"] = info["quickRatio"]
-            if info.get("debtToEquity"): fb["de"] = info["debtToEquity"]
-            if info.get("revenueGrowth"): fb["rev_growth"] = info["revenueGrowth"] * 100
-            if info.get("targetMeanPrice"): fb["target"] = info["targetMeanPrice"]
-            if info.get("forwardPE"): fb["f_pe"] = round(info["forwardPE"], 2)
-        except Exception:
-            pass
     except Exception:
         pass
-
     return fb, inc, bal, inst
 
 @st.cache_data(ttl=3600)
@@ -526,8 +412,8 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與「零鍵盤原生摺疊下拉選單」(Ver. 8) ---
-st.title("📊 台美股戰略追蹤儀表板 Ver. 8")
+# --- 主畫面標題與 Ver. 9 ---
+st.title("📊 台美股戰略追蹤儀表板 Ver. 9")
 
 if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
     st.success(st.session_state.flash_success_msg)
@@ -543,37 +429,54 @@ current_stock_label = st.session_state.watchlist.get(selected_ticker, selected_t
 
 st.caption("📌 目前檢視標的（點擊下方整條選單即可直接切換個股，0 打字框設計、絕不彈出手機鍵盤）：")
 
-# 使用原生 st.expander 取代 st.selectbox：內部完全沒有 <input> 標籤，100% 物理根治手機彈鍵盤，且點整條框任何位置皆可展開！
 with st.expander(f"📈 {current_stock_label}", expanded=False):
     for tk in ticker_options:
         item_label = st.session_state.watchlist.get(tk, tk)
         prefix_icon = "✅ " if tk == selected_ticker else "  "
-        if st.button(f"{prefix_icon}{item_label}", key=f" picker_btn_{tk}", use_container_width=True):
+        if st.button(f"{prefix_icon}{item_label}", key=f"picker_btn_{tk}", use_container_width=True):
             st.session_state.selected_ticker_key = tk
             st.rerun()
 
-# --- 側邊欄：新增 / 刪除自選股 (新增後自動清空輸入欄) ---
+# --- 側邊欄：新增 / 刪除自選股 (加入防手殘預覽機制) ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
 if "input_reset_counter" not in st.session_state:
     st.session_state.input_reset_counter = 0
 
 raw_input = st.sidebar.text_input(
     "輸入「代號」或「中文股名」皆可自動配對",
-    placeholder="例: 華通 或 2313 或 AMD",
+    placeholder="例: 南亞 或 1303 或 AMD",
     key=f"stock_input_{st.session_state.input_reset_counter}"
 )
+
+# 預覽確認機制的暫存狀態
+if "pending_add_stock" not in st.session_state:
+    st.session_state.pending_add_stock = None
 
 if st.sidebar.button("➕ 確認新增股票", use_container_width=True):
     if raw_input.strip():
         code_clean, formatted_label = auto_format_stock_entry(raw_input)
-        st.session_state.watchlist[code_clean] = formatted_label
-        st.session_state.selected_ticker_key = code_clean
-        st.session_state.input_reset_counter += 1
-        save_watchlist()
-        st.session_state.flash_success_msg = f"✅ 已成功新增：{formatted_label}"
-        st.rerun()
+        st.session_state.pending_add_stock = (code_clean, formatted_label)
     else:
         st.sidebar.warning("⚠️ 請先在上方框框輸入股票名稱或代號喔！")
+
+# 若有待確認的新增項目，跳出防呆確認橫幅
+if st.session_state.pending_add_stock:
+    c_code, c_label = st.session_state.pending_add_stock
+    st.sidebar.markdown(f"> ⚠️ **請確認是否新增：**\n> `🔮 {c_label}`")
+    col_y, col_n = st.sidebar.columns(2)
+    with col_y:
+        if st.button("✅ 確定加入", use_container_width=True):
+            st.session_state.watchlist[c_code] = c_label
+            st.session_state.selected_ticker_key = c_code
+            st.session_state.input_reset_counter += 1
+            st.session_state.pending_add_stock = None
+            save_watchlist()
+            st.session_state.flash_success_msg = f"✅ 已成功新增：{c_label}"
+            st.rerun()
+    with col_n:
+        if st.button("❌ 取消", use_container_width=True):
+            st.session_state.pending_add_stock = None
+            st.rerun()
 
 if st.sidebar.button("➖ 刪除目前檢視的股票", use_container_width=True):
     if len(st.session_state.watchlist) > 1:
@@ -719,7 +622,6 @@ with tab2:
 
     if not df_raw.empty:
         df_calc = df_raw.copy()
-
         ma_map = {"5MA": 5, "10MA": 10, "20MA": 20, "60MA": 60, "120MA": 120, "240MA": 240}
         ma_colors = {
             "5MA": "#FACC15",
