@@ -12,93 +12,76 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 # --- 網頁與手機版面設定 ---
-st.set_page_config(page_title="台美股戰略追蹤 App Ver. 7", page_icon="📱", layout="wide")
+st.set_page_config(page_title="台美股戰略追蹤 App Ver. 8", page_icon="📱", layout="wide")
 
-# --- 全域 CSS：保留完整選單排版與點擊區域，僅隱藏打字游標與輸入框提示小字 ---
+# --- 全域 CSS：美化「無鍵盤原生摺疊選單」與隱藏多餘提示字 ---
 st.markdown(
     """
     <style>
+    /* 1. 隱藏文字輸入框右下角的 Press Enter 英文小字 */
     div[data-testid="InputInstructions"] {
         display: none !important;
         visibility: hidden !important;
     }
-    /* 確保下拉選單整條框框與箭頭皆可點擊，且排版正常（文字在左、箭頭在右） */
-    div[data-baseweb="select"],
-    div[data-baseweb="select"] > div {
-        cursor: pointer !important;
-    }
-    /* 僅將內嵌搜尋 input 設為不可打字，不設 display:none 與 disabled，避免破壞 Flexbox 排版與點擊事件 */
-    div[data-baseweb="select"] input {
-        caret-color: transparent !important;
+
+    /* 2. 將技術線圖下方的 MultiSelect 內部打字框徹底移除，防止誤觸彈出鍵盤 */
+    div[data-testid="stMultiSelect"] input {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0px !important;
+        height: 0px !important;
         pointer-events: none !important;
+    }
+
+    /* 3. 將原生 Expander 打造成與下拉選單一模一樣的外觀（文字在左、箭頭在右、整條可點、0 input 絕不彈鍵盤） */
+    div[data-testid="stExpander"] {
+        border: 1px solid #CBD5E1 !important;
+        border-radius: 8px !important;
+        background-color: #F8FAFC !important;
+        margin-bottom: 10px !important;
+    }
+    div[data-testid="stExpander"] details summary {
+        padding: 12px 16px !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        color: #0F172A !important;
+        cursor: pointer !important;
         user-select: none !important;
         -webkit-user-select: none !important;
-        width: 1px !important;
-        opacity: 0 !important;
+    }
+    div[data-testid="stExpander"] details summary p {
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        margin: 0 !important;
+    }
+    /* 選單展開後的內部滾動容器，避免清單太長佔滿畫面 */
+    div[data-testid="stExpanderDetails"] {
+        max-height: 320px !important;
+        overflow-y: auto !important;
+        padding: 6px 10px 12px 10px !important;
+        background-color: #FFFFFF !important;
+        border-top: 1px solid #E2E8F0 !important;
+    }
+    /* 選單內的每一檔股票選項按鈕靠左對齊、無邊框清爽風格 */
+    div[data-testid="stExpanderDetails"] button {
+        justify-content: flex-start !important;
+        text-align: left !important;
+        border: 1px solid #F1F5F9 !important;
+        background-color: #F8FAFC !important;
+        color: #1E293B !important;
+        padding: 8px 12px !important;
+        margin-bottom: 2px !important;
+        border-radius: 6px !important;
+        font-weight: 500 !important;
+    }
+    div[data-testid="stExpanderDetails"] button:hover,
+    div[data-testid="stExpanderDetails"] button:active {
+        background-color: #E2E8F0 !important;
+        border-color: #94A3B8 !important;
     }
     </style>
     """,
     unsafe_allow_html=True
-)
-
-# --- 防彈鍵盤鎖 Ver. 7：不設定 disabled / display:none，僅透過 readOnly + inputmode="none" + 攔截 focus 封鎖手機鍵盤 ---
-components.html(
-    """
-    <script>
-    (function() {
-        try {
-            const pWin = window.parent;
-            const pDoc = pWin.document;
-
-            function makeSelectReadOnly() {
-                try {
-                    const inputs = pDoc.querySelectorAll('div[data-baseweb="select"] input');
-                    inputs.forEach(inp => {
-                        // 確保移除上一版可能殘留的 disabled 或 display:none
-                        inp.disabled = false;
-                        inp.removeAttribute('disabled');
-                        inp.style.removeProperty('display');
-                        inp.style.removeProperty('visibility');
-
-                        // 設定唯讀與無鍵盤模式，讓整條選單可點擊但絕不喚醒手機鍵盤
-                        inp.readOnly = true;
-                        inp.setAttribute('readonly', 'readonly');
-                        inp.setAttribute('inputmode', 'none');
-                        inp.setAttribute('tabindex', '-1');
-                    });
-                } catch (e) {}
-            }
-
-            // 攔截選單內部 input 的 focus()，防止 Android 鍵盤彈出，同時不阻斷點擊事件冒泡
-            if (!pWin._ver7FocusPatched) {
-                const origElemFocus = pWin.HTMLElement.prototype.focus;
-                function patchedFocus() {
-                    try {
-                        if (this && this.tagName === 'INPUT' && this.closest && this.closest('div[data-baseweb="select"]')) {
-                            this.readOnly = true;
-                            this.setAttribute('readonly', 'readonly');
-                            this.setAttribute('inputmode', 'none');
-                            return;
-                        }
-                    } catch (e) {}
-                    return origElemFocus.apply(this, arguments);
-                }
-                pWin.HTMLInputElement.prototype.focus = patchedFocus;
-                pWin.HTMLElement.prototype.focus = patchedFocus;
-                pWin._ver7FocusPatched = true;
-            }
-
-            ['touchstart', 'pointerdown', 'mousedown'].forEach(evtName => {
-                pDoc.addEventListener(evtName, makeSelectReadOnly, {capture: true, passive: true});
-            });
-
-            makeSelectReadOnly();
-            setInterval(makeSelectReadOnly, 150);
-        } catch (err) {}
-    })();
-    </script>
-    """,
-    height=1,
 )
 
 # --- 預設股票清單 (標準模板格式) ---
@@ -543,8 +526,8 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 主畫面標題與下拉選單 (Ver. 7) ---
-st.title("📊 台美股戰略追蹤儀表板 Ver. 7")
+# --- 主畫面標題與「零鍵盤原生摺疊下拉選單」(Ver. 8) ---
+st.title("📊 台美股戰略追蹤儀表板 Ver. 8")
 
 if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
     st.success(st.session_state.flash_success_msg)
@@ -555,13 +538,19 @@ ticker_options = get_sorted_watchlist_keys(st.session_state.watchlist)
 if "selected_ticker_key" not in st.session_state or st.session_state.selected_ticker_key not in ticker_options:
     st.session_state.selected_ticker_key = ticker_options[0]
 
-selected_ticker = st.selectbox(
-    "📌 目前檢視標的（點此直接切換個股，已依 A-Z 與代號排序）：",
-    options=ticker_options,
-    index=ticker_options.index(st.session_state.selected_ticker_key),
-    format_func=lambda x: st.session_state.watchlist.get(x, x)
-)
-st.session_state.selected_ticker_key = selected_ticker
+selected_ticker = st.session_state.selected_ticker_key
+current_stock_label = st.session_state.watchlist.get(selected_ticker, selected_ticker)
+
+st.caption("📌 目前檢視標的（點擊下方整條選單即可直接切換個股，0 打字框設計、絕不彈出手機鍵盤）：")
+
+# 使用原生 st.expander 取代 st.selectbox：內部完全沒有 <input> 標籤，100% 物理根治手機彈鍵盤，且點整條框任何位置皆可展開！
+with st.expander(f"📈 {current_stock_label}", expanded=False):
+    for tk in ticker_options:
+        item_label = st.session_state.watchlist.get(tk, tk)
+        prefix_icon = "✅ " if tk == selected_ticker else "  "
+        if st.button(f"{prefix_icon}{item_label}", key=f" picker_btn_{tk}", use_container_width=True):
+            st.session_state.selected_ticker_key = tk
+            st.rerun()
 
 # --- 側邊欄：新增 / 刪除自選股 (新增後自動清空輸入欄) ---
 st.sidebar.header("➕ 新增 / ➖ 刪除自選股")
@@ -692,7 +681,7 @@ with tab1:
 # 分頁 2：技術線型
 # ==========================================
 with tab2:
-    st.subheader(f"📈 {st.session_state.watchlist.get(selected_ticker)}")
+    st.subheader(f"📈 {current_stock_label}")
 
     ALL_MA_OPTIONS = ["5MA", "10MA", "20MA", "60MA", "120MA", "240MA"]
 
@@ -953,7 +942,7 @@ with tab2:
 # 分頁 3：財報紅黃綠燈、營收與未來訂單分析
 # ==========================================
 with tab3:
-    st.subheader(f"💰 {st.session_state.watchlist.get(selected_ticker)} 財報紅黃綠燈體檢與未來訂單展望")
+    st.subheader(f"💰 {current_stock_label} 財報紅黃綠燈體檢與未來訂單展望")
     fb, inc, bal, _ = fetch_comprehensive_financials(selected_ticker)
 
     gm, om, nm, roe = fb["gm"], fb["om"], fb["nm"], fb["roe"]
@@ -1005,7 +994,7 @@ with tab3:
 # 分頁 4：13F 機構持倉變動與法人籌碼
 # ==========================================
 with tab4:
-    st.subheader(f"🏦 {st.session_state.watchlist.get(selected_ticker)} 13F 機構持股變動與籌碼防呆")
+    st.subheader(f"🏦 {current_stock_label} 13F 機構持股變動與籌碼防呆")
     _, _, _, inst_df = fetch_comprehensive_financials(selected_ticker)
     df_recent = fetch_stock_history(selected_ticker, period="3mo", interval="1d")
 
@@ -1033,7 +1022,7 @@ with tab4:
 # 分頁 5：每日訴訟追蹤與多空消息雷達
 # ==========================================
 with tab5:
-    st.subheader(f"⚖️ {st.session_state.watchlist.get(selected_ticker)} 進行中訴訟追蹤與每日多空雷達")
+    st.subheader(f"⚖️ {current_stock_label} 進行中訴訟追蹤與每日多空雷達")
 
     col_n1, col_n2 = st.columns(2)
     with col_n1:
