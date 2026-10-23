@@ -12,9 +12,9 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 # --- 網頁與手機版面設定 ---
-st.set_page_config(page_title="台美股戰略追蹤 App Ver. 6", page_icon="📱", layout="wide")
+st.set_page_config(page_title="台美股戰略追蹤 App Ver. 7", page_icon="📱", layout="wide")
 
-# --- 全域 CSS：徹底移除下拉選單內部搜尋框的聚焦能力 (display:none + visibility:hidden)，100% 封鎖手機鍵盤 ---
+# --- 全域 CSS：保留完整選單排版與點擊區域，僅隱藏打字游標與輸入框提示小字 ---
 st.markdown(
     """
     <style>
@@ -22,29 +22,26 @@ st.markdown(
         display: none !important;
         visibility: hidden !important;
     }
-    div[data-baseweb="select"] input,
-    div[data-testid="stSelectbox"] input,
-    div[data-testid="stMultiSelect"] input {
-        display: none !important;
-        visibility: hidden !important;
+    /* 確保下拉選單整條框框與箭頭皆可點擊，且排版正常（文字在左、箭頭在右） */
+    div[data-baseweb="select"],
+    div[data-baseweb="select"] > div {
+        cursor: pointer !important;
+    }
+    /* 僅將內嵌搜尋 input 設為不可打字，不設 display:none 與 disabled，避免破壞 Flexbox 排版與點擊事件 */
+    div[data-baseweb="select"] input {
+        caret-color: transparent !important;
         pointer-events: none !important;
         user-select: none !important;
         -webkit-user-select: none !important;
-        width: 0px !important;
-        height: 0px !important;
+        width: 1px !important;
         opacity: 0 !important;
-        position: absolute !important;
-        z-index: -9999 !important;
-    }
-    div[data-baseweb="select"] > div {
-        min-height: 42px !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-# --- 雙重防線：將所有下拉選單內部 input 強制設為 disabled 與 display:none ---
+# --- 防彈鍵盤鎖 Ver. 7：不設定 disabled / display:none，僅透過 readOnly + inputmode="none" + 攔截 focus 封鎖手機鍵盤 ---
 components.html(
     """
     <script>
@@ -53,27 +50,50 @@ components.html(
             const pWin = window.parent;
             const pDoc = pWin.document;
 
-            function disableSelectInputs() {
+            function makeSelectReadOnly() {
                 try {
                     const inputs = pDoc.querySelectorAll('div[data-baseweb="select"] input');
                     inputs.forEach(inp => {
-                        inp.disabled = true;
+                        // 確保移除上一版可能殘留的 disabled 或 display:none
+                        inp.disabled = false;
+                        inp.removeAttribute('disabled');
+                        inp.style.removeProperty('display');
+                        inp.style.removeProperty('visibility');
+
+                        // 設定唯讀與無鍵盤模式，讓整條選單可點擊但絕不喚醒手機鍵盤
                         inp.readOnly = true;
-                        inp.setAttribute('disabled', 'disabled');
                         inp.setAttribute('readonly', 'readonly');
                         inp.setAttribute('inputmode', 'none');
                         inp.setAttribute('tabindex', '-1');
-                        inp.style.setProperty('display', 'none', 'important');
-                        inp.style.setProperty('visibility', 'hidden', 'important');
-                        if (pDoc.activeElement === inp) {
-                            inp.blur();
-                        }
                     });
                 } catch (e) {}
             }
 
-            disableSelectInputs();
-            setInterval(disableSelectInputs, 100);
+            // 攔截選單內部 input 的 focus()，防止 Android 鍵盤彈出，同時不阻斷點擊事件冒泡
+            if (!pWin._ver7FocusPatched) {
+                const origElemFocus = pWin.HTMLElement.prototype.focus;
+                function patchedFocus() {
+                    try {
+                        if (this && this.tagName === 'INPUT' && this.closest && this.closest('div[data-baseweb="select"]')) {
+                            this.readOnly = true;
+                            this.setAttribute('readonly', 'readonly');
+                            this.setAttribute('inputmode', 'none');
+                            return;
+                        }
+                    } catch (e) {}
+                    return origElemFocus.apply(this, arguments);
+                }
+                pWin.HTMLInputElement.prototype.focus = patchedFocus;
+                pWin.HTMLElement.prototype.focus = patchedFocus;
+                pWin._ver7FocusPatched = true;
+            }
+
+            ['touchstart', 'pointerdown', 'mousedown'].forEach(evtName => {
+                pDoc.addEventListener(evtName, makeSelectReadOnly, {capture: true, passive: true});
+            });
+
+            makeSelectReadOnly();
+            setInterval(makeSelectReadOnly, 150);
         } catch (err) {}
     })();
     </script>
@@ -523,8 +543,8 @@ def classify_news_sentiment(title):
             return "🔴 利空警示"
     return "🟡 產業/題材觀察"
 
-# --- 修正第 1 點：在主標題後方加上版號 Ver. 6 ---
-st.title("📊 台美股戰略追蹤儀表板 Ver. 6")
+# --- 主畫面標題與下拉選單 (Ver. 7) ---
+st.title("📊 台美股戰略追蹤儀表板 Ver. 7")
 
 if "flash_success_msg" in st.session_state and st.session_state.flash_success_msg:
     st.success(st.session_state.flash_success_msg)
